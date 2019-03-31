@@ -18,7 +18,7 @@ DEBUG()
 max_points=90
 
 # Enable/disable exiting when program fails.
-EXIT_IF_FAIL=0
+EXIT_IF_FAIL=1
 
 test_do_fail()
 {

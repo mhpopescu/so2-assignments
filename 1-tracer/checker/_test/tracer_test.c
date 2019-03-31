@@ -26,9 +26,9 @@
 #include "helper.h"
 
 /* use this to enable stats debugging */
-// #if 0
-#define DEBUG
-// #endif
+#if 0
+// #define DEBUG
+#endif
 
 #define MSECS  1000
 
@@ -438,7 +438,7 @@ static void tracer_proc_read_values(struct tracer_stats *st, int no)
 			&st[i].tr_up, &st[i].tr_down, &st[i].tr_lock,
 			&st[i].tr_unlock);
 	}
-#if 0
+#if 1
 	for (i = 0; i < no; i++) {
 		printf("%d %d %d %d %d %d %d %d %d %d\n",
 			st[i].tr_pid, st[i].tr_alloc, st[i].tr_free,
