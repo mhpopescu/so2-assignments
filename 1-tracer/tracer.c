@@ -46,14 +46,21 @@
 #define unlock_bucket_id(id)	\
 	spin_unlock(&hlocks[id])
 
-struct malloc_data {
+struct malloc_size {
 	int size;
+};
+
+struct malloc_data {
+	int addr;
+	int size;
+	struct hlist_node hnode;
 };
 
 struct proc_data {
 	int pid, kmalloc, kfree, kmalloc_mem, kfree_mem,
 		sched, up, down, lock, unlock;
 	struct hlist_node hnode;
+	DECLARE_HASHTABLE(hhead, NBITS);
 };
 
 DEFINE_HASHTABLE(hhead, NBITS);
@@ -68,9 +75,40 @@ static struct proc_data *new_proc_data(pid_t pid)
 		return NULL;
 
 	memset(pd, 0, sizeof(struct proc_data));
+
 	pd->pid = pid;
+	hash_init(pd->hhead);
 
 	return pd;
+}
+
+static struct malloc_data *new_hmalloc(int size, int addr)
+{
+	struct malloc_data *md;
+
+	md = kmalloc(sizeof(struct malloc_data), GFP_KERNEL);
+	if (md == NULL)
+		return NULL;
+
+	md->size = size;
+	md->addr = addr;
+
+	return md;
+}
+
+static void hfree() {
+	int i;
+	struct proc_data *pd;
+	struct malloc_data *md;
+	struct hlist_node *tmp;
+
+	for (i = 0; i < HASH_SZ; ++i) {
+		lock_bucket_id(i);
+		hlist_for_each_entry_safe(pd, *tmp, &hhead[i], hnode) {
+			
+		}
+		unlock_bucket_id(i);
+	}
 }
 
 static int tracer_show(struct seq_file *m, void *v)
@@ -175,11 +213,11 @@ static void inc_counter(int idx) {
 /* -------------- Probes ------------------- */
 static int kmalloc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	struct malloc_data *data;
+	struct malloc_size *data;
 
 	inc_counter(IDX_KMALLOC);
 
-	data = (struct malloc_data *)ri->data;
+	data = (struct malloc_size *)ri->data;
 	data->size = regs->ax;
 
 	return 0;
@@ -187,19 +225,60 @@ static int kmalloc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *
 
 static int kmalloc_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	struct malloc_data *data;
+	struct malloc_size *data;
+	int addr;
+	int pid;
+	struct proc_data *pd;
+	struct malloc_data *md;
 
-	data = (struct malloc_data *)ri->data;
+	data = (struct malloc_size *)ri->data;
 	add_to_field(IDX_KMALLOC_MEM, data->size);
 
-	int addr = regs_return_value(regs);
+	addr = regs_return_value(regs);
+	pid = current->pid;
+	md = new_hmalloc(data->size, addr);
+
+	lock_bucket_key(pid);
+	hash_for_each_possible(hhead, pd, hnode, pid) {
+		if (pd->pid != pid)
+			continue;
+		hash_add(pd->hhead, &md->hnode, addr);
+		break;
+	}
+	unlock_bucket_key(pid);
 
 	return 0;
 }
 
 static int kfree_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
+	int pid;
+	struct proc_data *pd;
+	struct malloc_data *md;
+	struct hlist_node *tmp;
+	int addr;
+
 	inc_counter(IDX_KFREE);
+
+	pid = current->pid;
+	addr = regs->ax;
+
+	lock_bucket_key(pid);
+	hash_for_each_possible(hhead, pd, hnode, pid) {
+		if (pd->pid != pid)
+			continue;
+		hash_for_each_possible_safe(pd->hhead, md, tmp, hnode, addr) {
+			if (md->addr != addr)
+				continue;
+			pd->kfree_mem += md->size;
+			hash_del(&md->hnode);
+			kfree(md);
+			break;
+		}
+		break;
+	}
+	unlock_bucket_key(pid);
+
 	return 0;
 }
 
@@ -319,6 +398,8 @@ static void tracer_exit(void)
 
 	unregister_kretprobes(probes, NKRET_PROBES);
 	printk(KERN_INFO "kretprobes unregistered\n");
+
+	hfree();
 
 	pr_notice("Driver %s unloaded\n", TRACER_DEV_NAME);
 }
