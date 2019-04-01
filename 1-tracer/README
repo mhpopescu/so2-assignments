@@ -1,0 +1,16 @@
+Am implementat tema folosind un hashmap. Am preferat sa il folosesc in locul unei liste pentru a vedea si cum se foloseste interfata din kernel pentru aceasta structura
+
+Problemele pe care le-am intampinat la aceasta tema au fost de sincronizare si de calculare a statisticii pentru functia kfree.
+
+Sincronizare.
+Daca as fi folosit o lista sincronizarea ar fi fost facuta facand un spinlock la fiecare acces al listei,
+ceea ce duce la o implementare destul de neoptima.
+Deoarece folosesc un hashmap, atunci cand caut o cheie in el trebuie sa folosesc hash_for_each_possible sau hash_for_each, modalitate prin care se itereaza prin fiecare bucket si se cauta cheia. Aici apar probleme de sincronizare pe care le-am rezolvat folosind un spinlock pentru fiecare bucket. Protejez accesul la fiecare bucket la operatiile de: adaugare/stergere a unui nou proces, rezolvare a statisticilor, afisare, eliberare memorie.
+
+Kfree
+Pentru a calcula memoria eliberata urmaresc indicatiile din tema si salvez[1][2] size-ul memoriei alocate in entry_handler, iar in  handler adresa de momorie. Salvez aceste date in structura de informatii a fiecarui proces, intr-un alt hashmap, unde cheia este adresa de memorie, iar valoarea structura de contine dimensiunea alocata de kmalloc. Astfel, in kfree pot sa aflu din structura procesului cata memorie a fost alocata si la ce adresa, pentru a calcula cate memorie o sa fie dezalocata de kfree.
+
+
+[1]https://stackoverflow.com/questions/22686393/get-a-probed-functions-arguments-in-the-entry-handler-of-a-kretprobe
+
+[2]https://stackoverflow.com/questions/31285093/get-a-functions-return-value-in-a-kretprobe-handler

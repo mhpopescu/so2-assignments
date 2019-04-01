@@ -20,8 +20,8 @@
 
 #include "tracer.h"
 
-#define NBITS 			10
-#define HASH_SZ 		(1 << NBITS)	
+#define NBITS			10
+#define HASH_SZ			(1 << NBITS)
 #define NKRET_PROBES	7
 
 #define IDX_KMALLOC		1
@@ -36,12 +36,12 @@
 
 #define BUFSIZE			128
 
-#define lock_bucket_key(pid) 	\
+#define lock_bucket_key(pid)	\
 	spin_lock(&hlocks[hash_min(pid, NBITS)])
 #define unlock_bucket_key(pid)	\
 	spin_unlock(&hlocks[hash_min(pid, NBITS)])
 
-#define lock_bucket_id(id) 		\
+#define lock_bucket_id(id)		\
 	spin_lock(&hlocks[id])
 #define unlock_bucket_id(id)	\
 	spin_unlock(&hlocks[id])
@@ -86,7 +86,7 @@ static struct malloc_data *new_hmalloc(int size, int addr)
 {
 	struct malloc_data *md;
 
-	md = kmalloc(sizeof(struct malloc_data), GFP_KERNEL);
+	md = kmalloc(sizeof(struct malloc_data), GFP_ATOMIC);
 	if (md == NULL)
 		return NULL;
 
@@ -96,16 +96,26 @@ static struct malloc_data *new_hmalloc(int size, int addr)
 	return md;
 }
 
-static void hfree() {
-	int i;
+static void hfree(void)
+{
+	int i, j;
 	struct proc_data *pd;
 	struct malloc_data *md;
-	struct hlist_node *tmp;
+	struct hlist_node *pd_tmp;
+	struct hlist_node *md_tmp;
 
 	for (i = 0; i < HASH_SZ; ++i) {
 		lock_bucket_id(i);
-		hlist_for_each_entry_safe(pd, *tmp, &hhead[i], hnode) {
-			
+		hlist_for_each_entry_safe(pd, pd_tmp, &hhead[i], hnode) {
+			for (j = 0; j < HASH_SZ; ++j) {
+				hlist_for_each_entry_safe(md, md_tmp,
+						&pd->hhead[j], hnode) {
+					hash_del(&md->hnode);
+					kfree(md);
+				}
+			}
+			hlist_del(&pd->hnode);
+			kfree(pd);
 		}
 		unlock_bucket_id(i);
 	}
@@ -117,16 +127,18 @@ static int tracer_show(struct seq_file *m, void *v)
 	char buf[BUFSIZE];
 	int i;
 
-	seq_puts(m, "PID\tkmalloc\tkfree\tkmalloc_mem\tkfree_mem\tsched\tup\tdown\tlock\tunlock\n");
-	pr_info("PID\tkmalloc\tkfree\tkmalloc_mem\tkfree_mem\tsched\tup\tdown\tlock\tunlock\n");
-
+	seq_puts(m, "PID\tkmalloc\tkfree\tkmalloc_mem\tkfree_mem\tsched\t"
+				"up\tdown\tlock\tunlock\n");
 	for (i = 0; i < HASH_SZ; ++i) {
 		lock_bucket_id(i);
 		hlist_for_each_entry(pd, &hhead[i], hnode) {
-			sprintf(buf, "%d\t%d\t%d\t%d\t\t%d\t\t%d\t%d\t%d\t%d\t%d\t\n", pd->pid, pd->kmalloc, pd->kfree, 
-				pd->kmalloc_mem, pd->kfree_mem, pd->sched, pd->up, pd->down, pd->lock, pd->unlock);
+			sprintf(buf, "%d\t%d\t%d\t%d\t\t%d\t\t"
+						"%d\t%d\t%d\t%d\t%d\t\n",
+						pd->pid, pd->kmalloc, pd->kfree,
+						pd->kmalloc_mem, pd->kfree_mem,
+						pd->sched, pd->up, pd->down,
+						pd->lock, pd->unlock);
 			seq_puts(m, buf);
-			pr_info("%s\n",buf);
 		}
 		unlock_bucket_id(i);
 	}
@@ -178,9 +190,9 @@ static const struct file_operations tracer_dev_fops = {
 };
 
 static struct miscdevice tracer_misc = {
-	.minor 		= TRACER_DEV_MINOR,
-	.name 		= TRACER_DEV_NAME,
-	.fops 		= &tracer_dev_fops,
+	.minor		= TRACER_DEV_MINOR,
+	.name		= TRACER_DEV_NAME,
+	.fops		= &tracer_dev_fops,
 };
 
 static const struct file_operations tracer_proc_fops = {
@@ -192,9 +204,9 @@ static const struct file_operations tracer_proc_fops = {
 
 struct proc_dir_entry *proc_file_entry;
 
-static void add_to_field(int idx, int sz) {
+static void add_to_field(int pid, int idx, int sz)
+{
 	struct proc_data *pd;
-	int pid = current->pid;
 
 	lock_bucket_key(pid);
 	hash_for_each_possible(hhead, pd, hnode, pid) {
@@ -206,16 +218,18 @@ static void add_to_field(int idx, int sz) {
 	unlock_bucket_key(pid);
 }
 
-static void inc_counter(int idx) {
-	add_to_field(idx, 1);
+static void inc_counter(int pid, int idx)
+{
+	add_to_field(pid, idx, 1);
 }
 
-/* -------------- Probes ------------------- */
-static int kmalloc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+/* -------------- Probes Handlers ------------------- */
+static int kmalloc_entry_handler(struct kretprobe_instance *ri,
+		struct pt_regs *regs)
 {
 	struct malloc_size *data;
 
-	inc_counter(IDX_KMALLOC);
+	inc_counter(current->pid, IDX_KMALLOC);
 
 	data = (struct malloc_size *)ri->data;
 	data->size = regs->ax;
@@ -223,7 +237,8 @@ static int kmalloc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *
 	return 0;
 }
 
-static int kmalloc_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+static int kmalloc_handler(struct kretprobe_instance *ri,
+		struct pt_regs *regs)
 {
 	struct malloc_size *data;
 	int addr;
@@ -232,7 +247,7 @@ static int kmalloc_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 	struct malloc_data *md;
 
 	data = (struct malloc_size *)ri->data;
-	add_to_field(IDX_KMALLOC_MEM, data->size);
+	add_to_field(current->pid, IDX_KMALLOC_MEM, data->size);
 
 	addr = regs_return_value(regs);
 	pid = current->pid;
@@ -250,7 +265,8 @@ static int kmalloc_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 	return 0;
 }
 
-static int kfree_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+static int kfree_handler(struct kretprobe_instance *ri,
+		struct pt_regs *regs)
 {
 	int pid;
 	struct proc_data *pd;
@@ -258,7 +274,7 @@ static int kfree_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 	struct hlist_node *tmp;
 	int addr;
 
-	inc_counter(IDX_KFREE);
+	inc_counter(current->pid, IDX_KFREE);
 
 	pid = current->pid;
 	addr = regs->ax;
@@ -282,77 +298,82 @@ static int kfree_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 	return 0;
 }
 
-static int sched_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+static int sched_handler(struct kretprobe_instance *ri,
+		struct pt_regs *regs)
 {
-	inc_counter(IDX_SCHED);
+	inc_counter(current->pid, IDX_SCHED);
 	return 0;
 }
 
-static int up_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+static int up_handler(struct kretprobe_instance *ri,
+		struct pt_regs *regs)
 {
-	inc_counter(IDX_UP);
+	inc_counter(current->pid, IDX_UP);
 	return 0;
 }
 
-static int down_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+static int down_handler(struct kretprobe_instance *ri,
+		struct pt_regs *regs)
 {
-	inc_counter(IDX_DOWN);
+	inc_counter(current->pid, IDX_DOWN);
 	return 0;
 }
 
-static int mutex_lock_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+static int mutex_lock_handler(struct kretprobe_instance *ri,
+		struct pt_regs *regs)
 {
-	inc_counter(IDX_LOCK);
+	inc_counter(current->pid, IDX_LOCK);
 	return 0;
 }
 
-static int mutex_unlock_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+static int mutex_unlock_handler(struct kretprobe_instance *ri,
+		struct pt_regs *regs)
 {
-	inc_counter(IDX_UNLOCK);
+	inc_counter(current->pid, IDX_UNLOCK);
 	return 0;
 }
+
+/* -------------- End Handlers ---------------------- */
 
 struct kretprobe **probes = (struct kretprobe *[]) {
-	& (struct kretprobe) {
-		.entry_handler = kmalloc_entry_handler,	
-	 	.handler = kmalloc_handler,
-	 	.data_size	= sizeof(struct malloc_data),
-	 	.maxactive = 32,
-	 	.kp.symbol_name = "__kmalloc",
+	&(struct kretprobe) {
+		.entry_handler = kmalloc_entry_handler,
+		.handler = kmalloc_handler,
+		.data_size	= sizeof(struct malloc_data),
+		.maxactive = 32,
+		.kp.symbol_name = "__kmalloc",
 	},
-	& (struct kretprobe) {
-	 	.entry_handler = kfree_handler,
+	&(struct kretprobe) {
+		.entry_handler = kfree_handler,
 		.maxactive = 32,
 		.kp.symbol_name = "kfree",
 	},
-	& (struct kretprobe) {
-	 	.entry_handler = sched_handler,
-		.maxactive = 32,
+	&(struct kretprobe) {
+		.entry_handler = sched_handler,
+		.maxactive = 256,
 		.kp.symbol_name = "schedule",
 	},
-	& (struct kretprobe) {
+	&(struct kretprobe) {
 		.entry_handler = up_handler,
 		.maxactive = 32,
 		.kp.symbol_name = "up",
 	},
-	& (struct kretprobe) {
+	&(struct kretprobe) {
 		.entry_handler = down_handler,
 		.maxactive = 32,
 		.kp.symbol_name = "down_interruptible",
 	},
-	& (struct kretprobe) {
+	&(struct kretprobe) {
 		.entry_handler = mutex_lock_handler,
 		.maxactive = 32,
 		.kp.symbol_name = "mutex_lock_nested",
 	},
-	& (struct kretprobe) {
+	&(struct kretprobe) {
 		.entry_handler = mutex_unlock_handler,
 		.maxactive = 32,
 		.kp.symbol_name = "mutex_unlock",
 	},
 };
-
-/* -------------- End Probes --------------- */
 
 static int tracer_init(void)
 {
@@ -364,10 +385,12 @@ static int tracer_init(void)
 		return err;
 	}
 
-	proc_file_entry = proc_create(TRACER_DEV_NAME, 0, NULL, &tracer_proc_fops);
-	if(proc_file_entry == NULL) {
-		pr_err("proc_create failed: \n");
-		return -ENOMEM;
+	proc_file_entry = proc_create(TRACER_DEV_NAME, 0,
+						NULL, &tracer_proc_fops);
+	if (proc_file_entry == NULL) {
+		pr_err("proc_create failed\n");
+		err = -ENOMEM;
+		goto proc_err;
 	}
 
 	err = register_kretprobes(probes, NKRET_PROBES);
@@ -386,8 +409,9 @@ static int tracer_init(void)
 	return 0;
 
 kprobes_err:
-	misc_deregister(&tracer_misc);
 	proc_remove(proc_file_entry);
+proc_err:
+	misc_deregister(&tracer_misc);
 	return err;
 }
 
@@ -397,7 +421,7 @@ static void tracer_exit(void)
 	proc_remove(proc_file_entry);
 
 	unregister_kretprobes(probes, NKRET_PROBES);
-	printk(KERN_INFO "kretprobes unregistered\n");
+	pr_notice("kretprobes unregistered\n");
 
 	hfree();
 
