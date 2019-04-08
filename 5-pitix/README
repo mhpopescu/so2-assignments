@@ -1,0 +1,27 @@
+mount -t pitix /tmp/pitix.loop /tmp/pitix.mnt/ -o loop
+
+Rationamentul de la minix pentru superblock
+pag 538 Operating Systems Design and Implementation, Third Edition
+By Andrew S. Tanenbaum
+The information in the superblock is redundant because sometimes it is needed in one form and
+sometimes in another. With 1 KB devoted to the superblock, it makes sense to compute this
+information in all the forms it is needed, rather than having to recompute it frequently during
+execution. The zone number of the first data zone on the disk, for example, can be calculated
+from the block size, zone size, number of i-nodes, and number of zones, but it is faster just to
+keep it in the superblock. The rest of the superblock is wasted anyhow, so using up another word
+of it costs nothing.
+
+In felul acesta lucram doar cu structura sbi
+
+
+DAR
+static inline struct pitix_super_block *pitix_sb(struct super_block *sb)
+{
+	return sb->s_fs_info;
+}
+
+DECI se vrea folosirea structurii pitix_super_block fara sa mai avem pitix_sb_info. Respectam structura data
+
+
+DUPA am vazut ca se pot modifica fisierele header
+http://cursuri.cs.pub.ro/pipermail/so2/2018-April/007622.html
