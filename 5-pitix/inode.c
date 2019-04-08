@@ -36,11 +36,6 @@ static struct dentry *pitix_lookup(struct inode *dir,
 
 /* dir and inode operation structures */
 
-struct file_operations pitix_dir_operations = {
-	.read		= generic_read_dir,
-	// .iterate	= pitix_readdir,
-};
-
 struct inode_operations pitix_dir_inode_operations = {
 	.lookup		= pitix_lookup,
 	/* TODO 7/1: Use pitix_create as the create function. */
@@ -65,31 +60,6 @@ struct inode_operations pitix_file_inode_operations = {
 };
 
 
-struct pitix_inode *
-pitix_raw_inode(struct super_block *sb, ino_t ino, struct buffer_head **bh)
-{
-	int block;
-	// struct pitix_sb_info *sbi = minix_sb(sb);
-	struct pitix_inode *inode;
-	int inodes_per_block = sb->s_blocksize / sizeof(struct pitix_inode);
-
-	*bh = NULL;
-	if (!ino || ino > sbi->s_ninodes) {
-		printk("Bad inode number on dev %s: %ld is out of range\n",
-		       sb->s_id, (long)ino);
-		return NULL;
-	}
-	ino--;
-	block = 2 + sbi->s_imap_blocks + sbi->s_zmap_blocks +
-		 ino / minix2_inodes_per_block;
-	*bh = sb_bread(sb, block);
-	if (!*bh) {
-		printk("Unable to read inode block\n");
-		return NULL;
-	}
-	p = (void *)(*bh)->b_data;
-	return p + ino % minix2_inodes_per_block;
-}
 
 
 struct inode *pitix_iget(struct super_block *sb, unsigned long ino)
@@ -97,8 +67,18 @@ struct inode *pitix_iget(struct super_block *sb, unsigned long ino)
 	struct pitix_inode *pi;
 	struct buffer_head *bh;
 	struct inode *inode;
-	struct pitix_inode_info *pii;
+	// struct pitix_inode_info *pii;
 	struct pitix_super_block *psb = pitix_sb(sb);
+	int block_id;
+	int inodes_per_block = pitix_inodes_per_block(sb);
+
+	if (ino > get_inodes(sb)) {
+		printk(LOG_LEVEL "Bad inode number on dev %s: %ld is out of range\n",
+		       sb->s_id, (long)ino);
+		return NULL;
+	}
+
+	block_id = psb->izone_block + ino / inodes_per_block;
 
 	/* Allocate VFS inode. */
 	inode = iget_locked(sb, ino);
@@ -107,17 +87,12 @@ struct inode *pitix_iget(struct super_block *sb, unsigned long ino)
 		return ERR_PTR(-ENOMEM);
 	}
 
-	/* TODO 4/2: Read block with inodes. It's the second block on
-	 * the device, i.e. the block with the index 1. This is the index
-	 * to be passed to sb_bread().
-	 */
-	// if (!(bh = sb_bread(s, PITIX_INODE_BLOCK)))
-	// 	goto out_bad_sb;
+	if (!(bh = sb_bread(sb, block_id)))
+		goto out_bad_sb;
 
-	/* TODO 4/1: Get inode with index ino from the block. */
-	pi = ((struct pitix_inode *) bh->b_data) + ino;
+	pi = ((struct pitix_inode *) bh->b_data) + ino % inodes_per_block;
 
-	/* TODO 4/6: fill VFS inode */
+	/* Fill VFS inode */
 	inode->i_mode = pi->mode;
 	i_uid_write(inode, pi->uid);
 	i_gid_write(inode, pi->gid);
@@ -125,21 +100,14 @@ struct inode *pitix_iget(struct super_block *sb, unsigned long ino)
 	inode->i_blocks = 0;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 
-	/* TODO 7/1: Fill address space operations (inode->i_mapping->a_ops) */
 	inode->i_mapping->a_ops = &pitix_aops;
 
 	if (S_ISDIR(inode->i_mode)) {
-		/* TODO 4/2: Fill dir inode operations. */
-		inode->i_op = &simple_dir_inode_operations;
-		inode->i_fop = &simple_dir_operations;
+		// inode->i_op = &simple_dir_inode_operations;
+		// inode->i_fop = &simple_dir_operations;
 
-		/* TODO 5/2: Use pitix_dir_inode_operations for i_op
-		 * and pitix_dir_operations for i_fop. */
 		inode->i_op = &pitix_dir_inode_operations;
 		inode->i_fop = &pitix_dir_operations;
-
-		/* TODO 4/1: Directory inodes start off with i_nlink == 2.
-		 * (use inc_link) */
 		inc_nlink(inode);
 	}
 
@@ -148,11 +116,11 @@ struct inode *pitix_iget(struct super_block *sb, unsigned long ino)
 		inode->i_fop = &pitix_file_operations;
 	}
 
-	pii = container_of(inode, struct pitix_inode_info, vfs_inode);
+	// pii = container_of(inode, struct pitix_inode_info, vfs_inode);
 	// FIXME
 	// pii->data_block = pi->direct_data_blocks[0];
 
-	// brelse(bh);
+	brelse(bh);
 	unlock_new_inode(inode);
 
 	return inode;
@@ -198,8 +166,8 @@ static void pitix_put_super(struct super_block *sb)
 	struct pitix_super_block *psb = pitix_sb(sb);
 
 	/* Free superblock buffer head. */
-	mark_buffer_dirty(sb->sbh);
-	brelse(sb->sbh);
+	mark_buffer_dirty(psb->sb_bh);
+	brelse(psb->sb_bh);
 
 	printk(KERN_DEBUG "released superblock resources\n");
 }
@@ -221,19 +189,18 @@ int pitix_fill_super(struct super_block *sb, void *data, int silent)
 	struct dentry *root_dentry;
 	struct buffer_head *bh;
 	int ret = -EINVAL;
-
+pr_info("start\n");
 	bh = sb_bread(sb, PITIX_SUPER_BLOCK);
 	if (bh == NULL)
 		goto out_bad_sb;
 
 	psb = (struct pitix_super_block *) bh->b_data;
-	/* Store pitix superblock buffer_head for further use. */
-	psb->sbh = bh; 
+	psb->sb_bh = bh; 
 
 	if (psb->magic != PITIX_MAGIC)
 		goto out_bad_magic;
 
-	sb->s_fs_info = sb;
+	sb->s_fs_info = psb;
 
 	if (!sb_set_blocksize(sb, (1 << psb->block_size_bits)))
 		goto out_bad_blocksize;
@@ -250,7 +217,7 @@ int pitix_fill_super(struct super_block *sb, void *data, int silent)
 	if (psb->dmap_bh == NULL)
 		goto out_bad_sb;
 	psb->dmap = (__u8 *)psb->dmap_bh->b_data;
-
+	
 	root_inode = pitix_iget(sb, PITIX_ROOT_INODE);
 	if (!root_inode)
 		goto out_bad_inode;
@@ -260,7 +227,6 @@ int pitix_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_iput;
 	sb->s_root = root_dentry;
 
-	psb->sbh = bh;
 	return 0;
 
 out_iput:
@@ -272,8 +238,7 @@ out_bad_magic:
 	brelse(bh);
 out_bad_blocksize:
 	printk(LOG_LEVEL "bad block size\n");
-	s->s_fs_info = NULL;
-	// kfree(sbi);
+	sb->s_fs_info = NULL;
 out_bad_sb:
 	printk(LOG_LEVEL "error reading buffer_head\n");
 	return ret;
@@ -302,7 +267,6 @@ static int __init pitix_init(void)
 		printk(LOG_LEVEL "register_filesystem failed\n");
 		return err;
 	}
-
 	return 0;
 }
 

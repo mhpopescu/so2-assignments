@@ -15,6 +15,10 @@
  *	+-0		+-- 4096
  */
 
+/* 
+ * PITIX super block on disk
+ * Reused for in-memory super block
+ */
 struct pitix_super_block {
 	unsigned long magic;
 	__u8 version;
@@ -31,11 +35,13 @@ struct pitix_super_block {
 #endif
 };
 
+/* PITIX dir entry on disk */
 struct pitix_dir_entry {
 	__u32 ino;
 	char name[PITIX_NAME_LEN];
 };
 
+/* PITIX inode on disk */
 struct pitix_inode {
 	__u32 mode;
 	uid_t uid;
@@ -47,26 +53,32 @@ struct pitix_inode {
 };
 
 #ifdef __KERNEL__
+
+/* returns size of PITIX inode on disk */
 static inline int inode_size(void)
 {
 	return sizeof(struct pitix_inode);
 }
 
+/* returns size of PITIX dir entry on disk */
 static inline int dir_entry_size(void)
 {
 	return sizeof(struct pitix_dir_entry);
 }
 
+/* returns number of PITIX dir entries per block */
 static inline int dir_entries_per_block(struct super_block *sb)
 {
 	return sb->s_blocksize/dir_entry_size();
 }
 
+/* returns number of data blocks on disk */
 static inline long get_blocks(struct super_block *sb)
 {
 	return 8*sb->s_blocksize;
 }
 
+/* returns number of PITIX inodes on disk */
 static inline long get_inodes(struct super_block *sb)
 {
 	return IZONE_BLOCKS*sb->s_blocksize/inode_size();
@@ -80,15 +92,17 @@ static inline long pitix_inodes_per_block(struct super_block *sb)
 /* Bitmap operations */
 extern int pitix_alloc_block(struct super_block *sb);
 extern void pitix_free_block(struct super_block *sb, int block);
-extern int pitix_alloc_inode(struct super_block *sb);
-extern void pitix_free_inode(struct super_block *sb, int ino);
 extern int pitix_get_block(struct inode *inode, sector_t block,
 		struct buffer_head *bh_result, int create);
 extern struct address_space_operations pitix_aops;
 
+extern int pitix_alloc_inode(struct super_block *sb);
+extern void pitix_free_inode(struct super_block *sb, int ino);
+
 /* Dir operations */
 extern struct inode_operations pitix_dir_inode_operations;
 extern struct file_operations pitix_dir_operations;
+extern int pitix_readdir(struct file *filp, struct dir_context *ctx);
 ino_t pitix_inode_by_name(struct dentry *dentry, int delete);
 
 /* File operations */

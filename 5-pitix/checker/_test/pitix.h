@@ -95,6 +95,7 @@ extern struct dentry *pitix_mount(struct file_system_type *fs_type,
 /* super block ops */
 extern const struct super_operations pitix_sops;
 extern struct inode *pitix_alloc_inode(struct super_block *sb);
+
 extern void pitix_destroy_inode(struct inode *inode);
 extern int pitix_write_inode(struct inode *inode,
 	struct writeback_control *wbc);

@@ -1,3 +1,4 @@
 EXTRA_CFLAGS = -Wall -g -Wno-unused
 
-obj-m = pitix.o
+obj-m = pitix.o 
+pitix-y = inode.o dir.o

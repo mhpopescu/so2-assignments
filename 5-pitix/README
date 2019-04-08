@@ -25,3 +25,6 @@ DECI se vrea folosirea structurii pitix_super_block fara sa mai avem pitix_sb_in
 
 DUPA am vazut ca se pot modifica fisierele header
 http://cursuri.cs.pub.ro/pipermail/so2/2018-April/007622.html
+
+!!!!!!!!!!!!!!!!!!!!!
+modprobe loop

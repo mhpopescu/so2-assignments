@@ -1,5 +1,5 @@
 #CPPFLAGS = -DDEBUG -DLOG_LEVEL=LOG_DEBUG
-CFLAGS = -Wall -g -static -m32 -DDEBUG -DLOG_LEVEL=LOG_DEBUG
+CFLAGS = -Wall -g -static -m32
 
 .PHONY: all clean
 
