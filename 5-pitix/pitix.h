@@ -6,6 +6,8 @@
 #define INODE_DIRECT_DATA_BLOCKS 5
 #define PITIX_NAME_LEN			16
 
+#define LOG_LEVEL			KERN_ALERT
+
 /*
  *	filesystem layout:
  *
@@ -22,16 +24,16 @@
 struct pitix_super_block {
 	unsigned long magic;
 	__u8 version;
-	__u8 block_size_bits;
-	__u8 imap_block;
-	__u8 dmap_block;
-	__u8 izone_block;
-	__u8 dzone_block;
-	__u16 bfree;
-	__u16 ffree;
+	__u8 block_size_bits;	/* block size = 2^block_size_bits */
+	__u8 imap_block;		/* inode vector map block number */
+	__u8 dmap_block;		/* data vector map block number */
+	__u8 izone_block;		/* first inode block number */
+	__u8 dzone_block;		/* first data block number */
+	__u16 bfree;			/* number of free blocks */
+	__u16 ffree;			/* number of free nodes */
 #ifdef __KERNEL__
 	struct buffer_head *sb_bh, *dmap_bh, *imap_bh;
-	__u8 *dmap, *imap;
+	__u8 *dmap, *imap;		/* data and inode vector map */
 #endif
 };
 
@@ -50,6 +52,13 @@ struct pitix_inode {
 	__u32 time;
 	__u16 direct_data_blocks[INODE_DIRECT_DATA_BLOCKS];
 	__u16 indirect_data_block;
+};
+
+/* PITIX inode in memory */
+struct pitix_inode_info {
+	__u16 dd_blocks[INODE_DIRECT_DATA_BLOCKS];
+	__u16 id_block;
+	struct inode vfs_inode;
 };
 
 #ifdef __KERNEL__
@@ -96,7 +105,7 @@ extern int pitix_get_block(struct inode *inode, sector_t block,
 		struct buffer_head *bh_result, int create);
 extern struct address_space_operations pitix_aops;
 
-extern int pitix_alloc_inode(struct super_block *sb);
+extern struct inode *pitix_alloc_inode(struct super_block *sb);
 extern void pitix_free_inode(struct super_block *sb, int ino);
 
 /* Dir operations */
@@ -104,6 +113,8 @@ extern struct inode_operations pitix_dir_inode_operations;
 extern struct file_operations pitix_dir_operations;
 extern int pitix_readdir(struct file *filp, struct dir_context *ctx);
 ino_t pitix_inode_by_name(struct dentry *dentry, int delete);
+
+int pitix_make_empty(struct inode *inode, struct inode *dir);
 
 /* File operations */
 extern struct file_operations pitix_file_operations;
@@ -117,6 +128,11 @@ extern void pitix_evict_inode(struct inode *inode);
 
 extern struct inode *pitix_iget(struct super_block *sb, unsigned long ino);
 
+int pitix_add_link(struct dentry *dentry, struct inode *inode);
+struct pitix_dir_entry *pitix_find_entry(struct dentry *dentry, struct page **res_page);
+int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page);
+void pitix_set_inode(struct inode *inode, dev_t rdev);
+
 /* Super operations */
 extern int pitix_fill_super(struct super_block *sb, void *data, int silent);
 extern struct super_operations pitix_sops;
@@ -127,9 +143,9 @@ static inline struct pitix_super_block *pitix_sb(struct super_block *sb)
 	return sb->s_fs_info;
 }
 
-static inline struct pitix_inode *pitix_i(struct inode *inode)
+static inline struct pitix_inode_info *pitix_i(struct inode *inode)
 {
-	return inode->i_private;
+	return container_of(inode, struct pitix_inode_info, vfs_inode);
 }
 
 #endif

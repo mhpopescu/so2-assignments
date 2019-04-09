@@ -1,4 +1,4 @@
 EXTRA_CFLAGS = -Wall -g -Wno-unused
 
 obj-m = pitix.o 
-pitix-y = inode.o dir.o
+pitix-y = namei.o inode.o dir.o bitmap.o itree.o
