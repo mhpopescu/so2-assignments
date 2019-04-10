@@ -30,5 +30,5 @@ http://cursuri.cs.pub.ro/pipermail/so2/2018-April/007622.html
 
 
 
-minix_iget
-unde e alocat minix_inode_info
+pentru directoare: lookup, unlink, mkdir, rmdir, iterate
+pentru fișiere: create, truncate, funcția de bitmap

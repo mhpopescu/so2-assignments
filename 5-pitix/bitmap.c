@@ -68,11 +68,15 @@ struct inode *pitix_new_inode(struct super_block *sb)
 	// 	iput(inode);
 	// 	return NULL;
 	// }
-	
+	// FIXME 	MOVE HERE because of make inode_dirty
+	// inode_init_owner(inode, dir, mode);
+
 	inode->i_ino = j;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 	inode->i_blocks = 0;
-	// memset(&pitix_i(inode)->u, 0, sizeof(pitix_i(inode)->u));
+
+	memset(&pitix_i(inode)->data_blocks, 0, 
+		INODE_DATA_BLOCKS * sizeof(pitix_i(inode)->data_blocks[0]));
 	insert_inode_hash(inode);
 	mark_inode_dirty(inode);
 
@@ -86,25 +90,20 @@ int pitix_alloc_block(struct super_block *sb)
 	int bits_per_zone = get_blocks(sb);
 	int i;
 
-	// for (i = 0; i < sbi->s_zmap_blocks; i++) {
-		// struct buffer_head *bh = sbi->s_zmap[i];
-		int j;
+	int j;
 
-		spin_lock(&bitmap_lock);
-		j = pitix_find_first_zero_bit(psb->dmap, bits_per_zone);
-		if (j < bits_per_zone) {
-			pitix_set_bit(j, psb->dmap);
-			spin_unlock(&bitmap_lock);
-			mark_buffer_dirty(psb->dmap_bh);
-			// j += i * bits_per_zone + sbi->s_firstdatazone-1;
-			// if (j < sbi->s_firstdatazone || j >= sbi->s_nzones)
-				// break;
-			return j + psb->dzone_block;
-		}
-		else
-			pr_info("BAD pitix_new_block\n");
+	spin_lock(&bitmap_lock);
+	j = pitix_find_first_zero_bit(psb->dmap, bits_per_zone);
+	if (j < bits_per_zone) {
+		pitix_set_bit(j, psb->dmap);
 		spin_unlock(&bitmap_lock);
-	// }
+		mark_buffer_dirty(psb->dmap_bh);
+		return j + psb->dzone_block;
+	}
+	else
+		pr_info("BAD pitix_alloc_block\n");
+
+	spin_unlock(&bitmap_lock);
 	return 0;
 }
 

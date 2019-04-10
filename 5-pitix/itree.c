@@ -12,252 +12,89 @@
 
 #include "pitix.h"
 
-typedef u16 block_t;
-enum {DIRECT = 7, DEPTH = 4};	/* Have triple indirect */
-
-typedef struct {
-	block_t	*p;
-	block_t	key;
-	struct buffer_head *bh;
-} Indirect;
-
-#define DIRCOUNT 7
-#define INDIRCOUNT(sb) (1 << ((sb)->s_blocksize_bits - 2))
-
 static DEFINE_RWLOCK(pointers_lock);
-
-// static inline block_t *i_data(struct inode *inode)
-// {
-// 	return (block_t *)pitix_i(inode)->direct_data_blocks;
-// }
-
-// static inline void add_chain(Indirect *p, struct buffer_head *bh, block_t *v)
-// {
-// 	p->key = *(p->p = v);
-// 	p->bh = bh;
-// }
-
-// static inline int verify_chain(Indirect *from, Indirect *to)
-// {
-// 	while (from <= to && from->key == *from->p)
-// 		from++;
-// 	return (from > to);
-// }
-
-// static inline Indirect *get_branch(struct inode *inode,
-// 					int depth,
-// 					int *offsets,
-// 					Indirect chain[DEPTH],
-// 					int *err)
-// {
-// 	struct super_block *sb = inode->i_sb;
-// 	Indirect *p = chain;
-// 	struct buffer_head *bh;
-
-// 	*err = 0;
-// 	/* i_data is not going away, no lock needed */
-// 	add_chain (chain, NULL, i_data(inode) + *offsets);
-// 	if (!p->key)
-// 		goto no_block;
-// 	while (--depth) {
-// 		bh = sb_bread(sb, p->key);
-// 		if (!bh)
-// 			goto failure;
-// 		read_lock(&pointers_lock);
-// 		if (!verify_chain(chain, p))
-// 			goto changed;
-// 		add_chain(++p, bh, (block_t *)bh->b_data + *++offsets);
-// 		read_unlock(&pointers_lock);
-// 		if (!p->key)
-// 			goto no_block;
-// 	}
-// 	return NULL;
-
-// changed:
-// 	read_unlock(&pointers_lock);
-// 	brelse(bh);
-// 	*err = -EAGAIN;
-// 	goto no_block;
-// failure:
-// 	*err = -EIO;
-// no_block:
-// 	return p;
-// }
-
-// static int block_to_path(struct inode *inode, long block, int offsets[DEPTH])
-// {
-// 	int n = 0;
-// 	struct super_block *sb = inode->i_sb;
-
-// 	if (block < 0) {
-// 		printk(LOG_LEVEL "PITIX-fs: block_to_path: block %ld < 0 on dev %pg\n",
-// 			block, sb->s_bdev);
-// 	} /*else if ((u64)block * (u64)sb->s_blocksize >=
-// 			minix_sb(sb)->s_max_size) {
-// 		if (printk_ratelimit())
-// 			printk("PITIX-fs: block_to_path: "
-// 			       "block %ld too big on dev %pg\n",
-// 				block, sb->s_bdev);
-// 	}*/ else if (block < DIRCOUNT) {
-// 		offsets[n++] = block;
-// 	} else if ((block -= DIRCOUNT) < INDIRCOUNT(sb)) {
-// 		offsets[n++] = DIRCOUNT;
-// 		offsets[n++] = block;
-// 	} else if ((block -= INDIRCOUNT(sb)) < INDIRCOUNT(sb) * INDIRCOUNT(sb)) {
-// 		offsets[n++] = DIRCOUNT + 1;
-// 		offsets[n++] = block / INDIRCOUNT(sb);
-// 		offsets[n++] = block % INDIRCOUNT(sb);
-// 	} else {
-// 		block -= INDIRCOUNT(sb) * INDIRCOUNT(sb);
-// 		offsets[n++] = DIRCOUNT + 2;
-// 		offsets[n++] = (block / INDIRCOUNT(sb)) / INDIRCOUNT(sb);
-// 		offsets[n++] = (block / INDIRCOUNT(sb)) % INDIRCOUNT(sb);
-// 		offsets[n++] = block % INDIRCOUNT(sb);
-// 	}
-// 	return n;
-// }
-
-// static int alloc_branch(struct inode *inode,
-// 			     int num,
-// 			     int *offsets,
-// 			     Indirect *branch)
-// {
-// 	int n = 0;
-// 	int i;
-// 	int parent = pitix_alloc_block(inode->i_sb);
-
-// 	branch[0].key = parent;
-// 	if (parent) for (n = 1; n < num; n++) {
-// 		struct buffer_head *bh;
-// 		/* Allocate the next block */
-// 		int nr = pitix_alloc_block(inode->i_sb);
-// 		if (!nr)
-// 			break;
-// 		branch[n].key = nr;
-// 		bh = sb_getblk(inode->i_sb, parent);
-// 		lock_buffer(bh);
-// 		memset(bh->b_data, 0, bh->b_size);
-// 		branch[n].bh = bh;
-// 		branch[n].p = (block_t*) bh->b_data + offsets[n];
-// 		*branch[n].p = branch[n].key;
-// 		set_buffer_uptodate(bh);
-// 		unlock_buffer(bh);
-// 		mark_buffer_dirty_inode(bh, inode);
-// 		parent = nr;
-// 	}
-// 	if (n == num)
-// 		return 0;
-
-// 	/* Allocation failed, free what we already allocated */
-// 	for (i = 1; i < n; i++)
-// 		bforget(branch[i].bh);
-// 	for (i = 0; i < n; i++)
-// 		pitix_free_block(inode->i_sb, branch[i].key);
-// 	return -ENOSPC;
-// }
-
-// static inline int splice_branch(struct inode *inode,
-// 				     Indirect chain[DEPTH],
-// 				     Indirect *where,
-// 				     int num)
-// {
-// 	int i;
-
-// 	write_lock(&pointers_lock);
-
-// 	/* Verify that place we are splicing to is still there and vacant */
-// 	if (!verify_chain(chain, where-1) || *where->p)
-// 		goto changed;
-
-// 	*where->p = where->key;
-
-// 	write_unlock(&pointers_lock);
-
-// 	/* We are done with atomic stuff, now do the rest of housekeeping */
-
-// 	inode->i_ctime = current_time(inode);
-
-// 	/* had we spliced it onto indirect block? */
-// 	if (where->bh)
-// 		mark_buffer_dirty_inode(where->bh, inode);
-
-// 	mark_inode_dirty(inode);
-// 	return 0;
-
-// changed:
-// 	write_unlock(&pointers_lock);
-// 	for (i = 1; i < num; i++)
-// 		bforget(where[i].bh);
-// 	for (i = 0; i < num; i++)
-// 		pitix_free_block(inode->i_sb, where[i].key);
-// 	return -EAGAIN;
-// }
 
 int pitix_get_block(struct inode *inode, sector_t block,
 			struct buffer_head *bh, int create)
 {
-	struct pitix_super_block *psb = pitix_sb(inode->i_sb);
-	// pr_info("pitix_get_block inode=[%ld] block=[%lld]\n", inode->i_ino, block);
+	struct super_block *sb = inode->i_sb;
+	struct pitix_super_block *psb = pitix_sb(sb);
+	struct pitix_inode_info *pii = pitix_i(inode);
 
-	if (block < get_blocks(inode->i_sb))
-		map_bh(bh, inode->i_sb, psb->dzone_block + block);
+	// pr_info("pitix_get_block \n");
+	if (block > get_blocks(sb))
+		return 1;
+
+	if (block < INODE_DIRECT_DATA_BLOCKS) {
+		int b = psb->dzone_block + pii->data_blocks[block];
+		// bh = sb_bread(sb, b);
+		// if (!bh) {
+		// 	printk("Unable to read inode block\n");
+		// 	return 1;
+		// }
+		map_bh(bh, sb, b);
+		// pr_info("pitix_get_block %d \n", b);
+	}
+	// else {
+	// 	bh = sb_bread(sb, psb->dzone_block[INDIRECT_BLOCK] block);
+
+	// }
 	return 0;
-// 	int err = -EIO;
+}
+
+void pitix_truncate (struct inode *inode)
+{
+// 	struct super_block *sb = inode->i_sb;
+// 	block_t *idata = i_data(inode);
 // 	int offsets[DEPTH];
 // 	Indirect chain[DEPTH];
 // 	Indirect *partial;
-// 	int left;
-// 	int depth = block_to_path(inode, block, offsets);
+// 	block_t nr = 0;
+// 	int n;
+// 	int first_whole;
+// 	long iblock;
 
-// 	if (depth == 0)
-// 		goto out;
+// 	iblock = (inode->i_size + sb->s_blocksize -1) >> sb->s_blocksize_bits;
+// 	block_truncate_page(inode->i_mapping, inode->i_size, pitix_get_block);
 
-// reread:
-// 	partial = get_branch(inode, depth, offsets, chain, &err);
+// 	n = block_to_path(inode, iblock, offsets);
+// 	if (!n)
+// 		return;
 
-// 	/* Simplest case - block found, no allocation needed */
-// 	if (!partial) {
-// got_it:
-// 		map_bh(bh, inode->i_sb, chain[depth-1].key);
-// 		/* Clean up and exit */
-// 		partial = chain+depth-1; /* the whole chain */
-// 		goto cleanup;
+// 	if (n == 1) {
+// 		free_data(inode, idata+offsets[0], idata + DIRECT);
+// 		first_whole = 0;
+// 		goto do_indirects;
 // 	}
 
-// 	/* Next simple case - plain lookup or failed read of indirect block */
-// 	if (!create || err == -EIO) {
-// cleanup:
-// 		while (partial > chain) {
-// 			brelse(partial->bh);
-// 			partial--;
-// 		}
-// out:
-// 		return err;
+// 	first_whole = offsets[0] + 1 - DIRECT;
+// 	partial = find_shared(inode, n, offsets, chain, &nr);
+// 	if (nr) {
+// 		if (partial == chain)
+// 			mark_inode_dirty(inode);
+// 		else
+// 			mark_buffer_dirty_inode(partial->bh, inode);
+// 		free_branches(inode, &nr, &nr+1, (chain+n-1) - partial);
 // 	}
-
-// 	/*
-// 	 * Indirect block might be removed by truncate while we were
-// 	 * reading it. Handling of that case (forget what we've got and
-// 	 * reread) is taken out of the main path.
-// 	 */
-// 	if (err == -EAGAIN)
-// 		goto changed;
-
-// 	left = (chain + depth) - partial;
-// 	err = alloc_branch(inode, left, offsets+(partial-chain), partial);
-// 	if (err)
-// 		goto cleanup;
-
-// 	if (splice_branch(inode, chain, partial, left) < 0)
-// 		goto changed;
-
-// 	set_buffer_new(bh);
-// 	goto got_it;
-
-// changed:
+// 	/* Clear the ends of indirect blocks on the shared branch */
 // 	while (partial > chain) {
-// 		brelse(partial->bh);
+// 		free_branches(inode, partial->p + 1, block_end(partial->bh),
+// 				(chain+n-1) - partial);
+// 		mark_buffer_dirty_inode(partial->bh, inode);
+// 		brelse (partial->bh);
 // 		partial--;
 // 	}
-// 	goto reread;
+// do_indirects:
+// 	/* Kill the remaining (whole) subtrees */
+// 	while (first_whole < DEPTH-1) {
+// 		nr = idata[DIRECT+first_whole];
+// 		if (nr) {
+// 			idata[DIRECT+first_whole] = 0;
+// 			mark_inode_dirty(inode);
+// 			free_branches(inode, &nr, &nr+1, first_whole+1);
+// 		}
+// 		first_whole++;
+// 	}
+// 	inode->i_mtime = inode->i_ctime = current_time(inode);
+// 	mark_inode_dirty(inode);
 }

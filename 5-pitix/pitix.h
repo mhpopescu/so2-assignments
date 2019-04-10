@@ -4,7 +4,9 @@
 #define PITIX_MAGIC			0x58495450 /* ascii little endian for PTIX */
 #define IZONE_BLOCKS		32
 #define INODE_DIRECT_DATA_BLOCKS 5
-#define PITIX_NAME_LEN			16
+#define INDIRECT_BLOCK 		INODE_DIRECT_DATA_BLOCKS
+#define INODE_DATA_BLOCKS 	6
+#define PITIX_NAME_LEN		16
 
 #define LOG_LEVEL			KERN_ALERT
 
@@ -29,8 +31,8 @@ struct pitix_super_block {
 	__u8 dmap_block;		/* data vector map block number */
 	__u8 izone_block;		/* first inode block number */
 	__u8 dzone_block;		/* first data block number */
-	__u16 bfree;			/* number of free blocks */
-	__u16 ffree;			/* number of free nodes */
+	__u16 bfree;			/* number of free data blocks */
+	__u16 ffree;			/* number of free inodes */
 #ifdef __KERNEL__
 	struct buffer_head *sb_bh, *dmap_bh, *imap_bh;
 	__u8 *dmap, *imap;		/* data and inode vector map */
@@ -54,10 +56,12 @@ struct pitix_inode {
 	__u16 indirect_data_block;
 };
 
-/* PITIX inode in memory */
+/* 
+ * PITIX inode in memory
+ * 5 (direct data blocks) + 1 (indirect data block)
+ */
 struct pitix_inode_info {
-	__u16 dd_blocks[INODE_DIRECT_DATA_BLOCKS];
-	__u16 id_block;
+	__u16 data_blocks[INODE_DATA_BLOCKS];
 	struct inode vfs_inode;
 };
 
@@ -115,11 +119,15 @@ extern int pitix_readdir(struct file *filp, struct dir_context *ctx);
 ino_t pitix_inode_by_name(struct dentry *dentry, int delete);
 
 int pitix_make_empty(struct inode *inode, struct inode *dir);
+int pitix_empty_dir(struct inode *inode);
 
 /* File operations */
 extern struct file_operations pitix_file_operations;
 extern struct inode_operations pitix_file_inode_operations;
 void pitix_truncate(struct inode *inode);
+
+int pitix_getattr(const struct path *path, struct kstat *stat,
+		  u32 request_mask, unsigned int flags);
 
 /* Inode operations */
 extern struct inode *pitix_new_inode(struct super_block *sb);

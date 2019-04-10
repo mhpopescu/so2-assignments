@@ -27,6 +27,7 @@ static struct dentry *pitix_lookup(struct inode *dir, struct dentry *dentry, uns
 		return ERR_PTR(-ENAMETOOLONG);
 
 	ino = pitix_inode_by_name(dentry, 0);
+	pr_info("[lookup] inode %ld\n", ino);
 	if (ino)
 		inode = pitix_iget(dir->i_sb, ino);
 	return d_splice_alias(inode, dentry);
@@ -93,6 +94,17 @@ static int pitix_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	return pitix_mknod(dir, dentry, mode, 0);
 }
 
+static int pitix_link(struct dentry *old_dentry, struct inode * dir,
+	struct dentry *dentry)
+{
+	struct inode *inode = d_inode(old_dentry);
+
+	inode->i_ctime = current_time(inode);
+	inode_inc_link_count(inode);
+	ihold(inode);
+	return add_nondir(dentry, inode);
+}
+
 static int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct inode *inode;
@@ -153,13 +165,30 @@ end_unlink:
 	return err;
 }
 
+static int pitix_rmdir(struct inode *dir, struct dentry *dentry)
+{
+	struct inode *inode = d_inode(dentry);
+	int err = -ENOTEMPTY;
+
+	if (pitix_empty_dir(inode)) {
+		err = pitix_unlink(dir, dentry);
+		if (!err) {
+			inode_dec_link_count(dir);
+			inode_dec_link_count(inode);
+		}
+	}
+	return err;
+}
 
 struct inode_operations pitix_dir_inode_operations = {
 	.lookup		= pitix_lookup,
 	.create		= pitix_create,
+	.link		= pitix_link,
 	.unlink		= pitix_unlink,
-
 	.mkdir		= pitix_mkdir,
+	.rmdir		= pitix_rmdir,
+	// .rename		= minix_rename,
+	.getattr	= pitix_getattr,
 	.mknod		= pitix_mknod,
 
 };

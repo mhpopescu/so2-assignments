@@ -26,24 +26,11 @@ static inline void dir_put_page(struct page *page)
 	put_page(page);
 }
 
-/*
- * Return the offset into page `page_nr' of the last valid
- * byte in that page, plus one.
- */
-static unsigned
-pitix_last_byte(struct inode *inode, unsigned long page_nr)
-{
-	unsigned last_byte = PAGE_SIZE;
-
-	if (page_nr == (inode->i_size >> PAGE_SHIFT))
-		last_byte = inode->i_size & (PAGE_SIZE - 1);
-	return last_byte;
-}
-
-static struct page *dir_get_page(struct inode *dir, unsigned long n)
+static struct page *dir_get_page(struct inode *dir)
 {
 	struct address_space *mapping = dir->i_mapping;
-	struct page *page = read_mapping_page(mapping, n, NULL);
+	// pr_info("dir_get_page block %d\n", pitix_i(dir)->data_blocks[0]);
+	struct page *page = read_mapping_page(mapping, 0, NULL);
 	if (!IS_ERR(page))
 		kmap(page);
 	return page;
@@ -56,102 +43,80 @@ static inline void *pitix_next_entry(void *de)
 
 // int pitix_readdir(struct file *file, struct dir_context *ctx)
 // {
+// 	struct buffer_head *bh = NULL;
+// 	struct pitix_dir_entry *de;
 // 	struct inode *inode = file_inode(file);
+// 	struct pitix_inode_info *pii = pitix_i(inode);
 // 	struct super_block *sb = inode->i_sb;
-// 	unsigned chunk_size = dir_entry_size();
-// 	unsigned long npages = dir_pages(inode);
-// 	unsigned long pos = ctx->pos;
-// 	unsigned offset;
-// 	unsigned long n;
+// 	int err = 0;
+// 	int over;
 
-// 	ctx->pos = pos = ALIGN(pos, chunk_size);
-// 	if (pos >= inode->i_size)
-// 		return 0;
+// /* read data block for directory inode */
+// bh = sb_bread(sb, pitix_sb(sb)->dzone_block + pii->data_blocks[0]);
+// pr_info("page %d ", pitix_sb(sb)->dzone_block + pii->data_blocks[0]);
+// if (bh == NULL) {
+// 	printk(LOG_LEVEL "could not read block\n");
+// 	err = -ENOMEM;
+// 	goto out_bad_sb;
+// }
 
-// 	offset = pos & ~PAGE_MASK;
-// 	n = pos >> PAGE_SHIFT;
-
-// 	// pr_info("folder %s offset %d npages %ld n %ld dir_entry_size %d\n", file->f_path.dentry->d_name.name,
-// 	// 	offset, npages, n, dir_entry_size());
-// 	// struct pitix_super_block *psb = pitix_sb(sb);
-// 	// pr_info("%d imap %d dzone\n", psb->imap_block, psb->dzone_block);
-// 	// pr_info("%d %d\n", psb->imap[0], psb->dmap[0]);
-
-// 	for ( ; n < npages; n++, offset = 0) {
-// 		char *p, *kaddr, *limit;
-// 		struct page *page = dir_get_page(inode, n);
-
-// 		if (IS_ERR(page))
-// 			continue;
-// 		kaddr = (char *)page_address(page);
-// 		p = kaddr+offset;
-
-// 		limit = kaddr + pitix_last_byte(inode, n) - chunk_size;
-// 		for ( ; p <= limit; p = pitix_next_entry(p)) {
-// 			const char *name;
-// 			struct pitix_dir_entry *de = (struct pitix_dir_entry *)p;
-// 			name = de->name;
-			
-// 			// pr_info("FOR %d ino %d name %s", p, de->ino, name);
-// 			if (de->ino) {
-// 				unsigned l = strnlen(name, PITIX_NAME_LEN);
-// 				if (!dir_emit(ctx, name, l,
-// 					      de->ino, DT_UNKNOWN)) {
-// 					dir_put_page(page);
-// 					return 0;
-// 				}
-// 			}
-// 			ctx->pos += chunk_size;
+// for (; ctx->pos < dir_entries_per_block(sb); ctx->pos++) {
+// 	de = (struct pitix_dir_entry *) bh->b_data + ctx->pos;
+// 	if (de->ino != 0) {
+// 		over = dir_emit(ctx, de->name, PITIX_NAME_LEN,
+// 				de->ino, DT_UNKNOWN);
+// 		if (over) {
+// 			ctx->pos += 1;
+// 			goto done;
 // 		}
-// 		pr_info("\n");
-// 		dir_put_page(page);
 // 	}
-	
-// 	return 0;
+// }
+
+// done:
+// 	brelse(bh);
+// out_bad_sb:
+// 	return err;
 // }
 
 
 int pitix_readdir(struct file *file, struct dir_context *ctx)
 {
-	struct buffer_head *bh = NULL;
-	struct pitix_dir_entry *de;
 	struct inode *inode = file_inode(file);
-	struct pitix_inode_info *pii = pitix_i(inode);
 	struct super_block *sb = inode->i_sb;
-	int err = 0;
+	struct pitix_super_block *psb = pitix_sb(sb);
+	unsigned chunk_size = dir_entry_size();
+	unsigned long pos = ctx->pos;
+	char *kaddr;
+	struct page *page = dir_get_page(inode);
+	struct pitix_dir_entry *de;
 	int over;
 
-	/* read data block for directory inode */
-	bh = sb_bread(sb, pitix_sb(sb)->dzone_block + pii->dd_blocks[0]);
-	if (bh == NULL) {
-		printk(LOG_LEVEL "could not read block\n");
-		err = -ENOMEM;
-		goto out_bad_sb;
-	}
-	// printk("Read data block %d for folder %s\n", pii->dd_blocks[0],
-	// 		file->f_path.dentry->d_name.name);
+	// pr_info("pitix_readdir\n");
 
-	
+	if (pos >= inode->i_size)
+		return 0;
+
+	if (IS_ERR(page)){
+		pr_info("pitix_readdir page err\n");
+		BUG();
+	}
+	kaddr = (char *)page_address(page);
+
 	for (; ctx->pos < dir_entries_per_block(sb); ctx->pos++) {
-		de = (struct pitix_dir_entry *) bh->b_data + ctx->pos;
-		if (de->ino != 0) {
+		de = (struct pitix_dir_entry *)kaddr + ctx->pos;
+		if (de->ino) {
 			over = dir_emit(ctx, de->name, PITIX_NAME_LEN,
 					de->ino, DT_UNKNOWN);
 			if (over) {
-				// printk(LOG_LEVEL "Read %s from folder %s, ctx->pos: %lld\n",
-				// 		de->name,
-				// 		file->f_path.dentry->d_name.name,
-				// 		ctx->pos);
 				ctx->pos += 1;
-				goto done;
+				break;
 			}
 		}
 	}
+	// pr_info("ENDpitix_readdir\n");
 
-done:
-	brelse(bh);
-out_bad_sb:
-	return err;
+	dir_put_page(page);
+	return 0;
 }
 
 static inline int namecompare(int len, int maxlen,
@@ -176,36 +141,33 @@ struct pitix_dir_entry *pitix_find_entry(struct dentry *dentry, struct page **re
 	int namelen = dentry->d_name.len;
 	struct inode *dir = d_inode(dentry->d_parent);
 	struct super_block *sb = dir->i_sb;
-	unsigned long n;
-	unsigned long npages = dir_pages(dir);
 	struct page *page = NULL;
 	char *p;
+	char *kaddr, *limit;
 
 	char *namx;
 	__u32 ino;
 	*res_page = NULL;
 
-	for (n = 0; n < npages; n++) {
-		char *kaddr, *limit;
 
-		page = dir_get_page(dir, n);
-		if (IS_ERR(page))
+	page = dir_get_page(dir);
+	if (IS_ERR(page))
+		BUG();
+
+	kaddr = (char*)page_address(page);
+	limit = kaddr + PAGE_SIZE - dir_entry_size();
+	for (p = kaddr; p <= limit; p = pitix_next_entry(p)) {
+		struct pitix_dir_entry *de = (struct pitix_dir_entry *)p;
+		namx = de->name;
+		ino = de->ino;
+
+		if (!ino)
 			continue;
-
-		kaddr = (char*)page_address(page);
-		limit = kaddr + pitix_last_byte(dir, n) - dir_entry_size();
-		for (p = kaddr; p <= limit; p = pitix_next_entry(p)) {
-			struct pitix_dir_entry *de = (struct pitix_dir_entry *)p;
-			namx = de->name;
-			ino = de->ino;
-
-			if (!ino)
-				continue;
-			if (namecompare(namelen, PITIX_NAME_LEN, name, namx))
-				goto found;
-		}
-		dir_put_page(page);
+		if (namecompare(namelen, PITIX_NAME_LEN, name, namx))
+			goto found;
 	}
+	dir_put_page(page);
+
 	return NULL;
 
 found:
@@ -259,8 +221,6 @@ int pitix_add_link(struct dentry *dentry, struct inode *inode)
 	int namelen = dentry->d_name.len;
 	struct super_block *sb = dir->i_sb;
 	struct page *page = NULL;
-	unsigned long npages = dir_pages(dir);
-	unsigned long n;
 	char *kaddr, *p;
 	struct pitix_dir_entry *de;
 	loff_t pos;
@@ -268,41 +228,35 @@ int pitix_add_link(struct dentry *dentry, struct inode *inode)
 	char *namx = NULL;
 	__u32 inumber;
 
-	/*
-	 * We take care of directory expansion in the same loop
-	 * This code plays outside i_size, so it locks the page
-	 * to protect that region.
-	 */
-	for (n = 0; n <= npages; n++) {
-		char *limit, *dir_end;
+	char *limit, *dir_end;
 
-		page = dir_get_page(dir, n);
-		err = PTR_ERR(page);
-		if (IS_ERR(page))
-			goto out;
-		lock_page(page);
-		kaddr = (char*)page_address(page);
-		dir_end = kaddr + pitix_last_byte(dir, n);
-		limit = kaddr + PAGE_SIZE - dir_entry_size();
-		for (p = kaddr; p <= limit; p = pitix_next_entry(p)) {
-			de = (struct pitix_dir_entry *)p;
-			namx = de->name;
-			inumber = de->ino;
+	page = dir_get_page(dir);
+	err = PTR_ERR(page);
+	if (IS_ERR(page))
+		goto out;
+	lock_page(page);
+	kaddr = (char*)page_address(page);
+	dir_end = kaddr + PAGE_SIZE;
+	limit = kaddr + PAGE_SIZE - dir_entry_size();
+	for (p = kaddr; p <= limit; p = pitix_next_entry(p)) {
+		de = (struct pitix_dir_entry *)p;
+		namx = de->name;
+		inumber = de->ino;
 
-			if (p == dir_end) {
-				/* We hit i_size */
-				de->ino = 0;
-				goto got_it;
-			}
-			if (!inumber)
-				goto got_it;
-			err = -EEXIST;
-			if (namecompare(namelen, PITIX_NAME_LEN, name, namx))
-				goto out_unlock;
+		if (p == dir_end) {
+			/* We hit i_size */
+			de->ino = 0;
+			goto got_it;
 		}
-		unlock_page(page);
-		dir_put_page(page);
+		if (!inumber)
+			goto got_it;
+		err = -EEXIST;
+		if (namecompare(namelen, PITIX_NAME_LEN, name, namx))
+			goto out_unlock;
 	}
+
+	unlock_page(page);
+	dir_put_page(page);
 	BUG();
 	return -EINVAL;
 
@@ -382,7 +336,54 @@ fail:
 	return err;
 }
 
+/*
+ * routine to check that the specified directory is empty (for rmdir)
+ */
+int pitix_empty_dir(struct inode *inode)
+{
+	struct page *page = NULL;
+	unsigned long i, npages = dir_pages(inode);
+	// struct minix_sb_info *sbi = minix_sb(inode->i_sb);
+	char *name;
+	__u32 inumber;
+
+	char *p, *kaddr, *limit;
+
+	page = dir_get_page(inode);
+	if (IS_ERR(page))
+		BUG();
+
+	kaddr = (char *)page_address(page);
+	limit = kaddr + PAGE_SIZE - dir_entry_size();
+	for (p = kaddr; p <= limit; p = pitix_next_entry(p)) {
+			struct pitix_dir_entry *de = (struct pitix_dir_entry *)p;
+			name = de->name;
+			inumber = de->ino;
+
+		if (inumber != 0) {
+			/* check for . and .. */
+			if (name[0] != '.')
+				goto not_empty;
+			if (!name[1]) {
+				if (inumber != inode->i_ino)
+					goto not_empty;
+			} else if (name[1] != '.')
+				goto not_empty;
+			else if (name[2])
+				goto not_empty;
+		}
+	}
+	dir_put_page(page);
+	return 1;
+
+not_empty:
+	dir_put_page(page);
+	return 0;
+}
+
 struct file_operations pitix_dir_operations = {
+	.llseek		= generic_file_llseek,
 	.read		= generic_read_dir,
 	.iterate	= pitix_readdir,
+	.fsync		= generic_file_fsync,
 };
