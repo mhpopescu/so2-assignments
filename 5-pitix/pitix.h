@@ -128,7 +128,7 @@ int pitix_getattr(const struct path *path, struct kstat *stat,
 		  u32 request_mask, unsigned int flags);
 
 /* Inode operations */
-extern struct inode *pitix_new_inode(struct super_block *sb);
+extern struct inode *pitix_new_inode(const struct inode *dir, umode_t mode, int *error);
 extern int pitix_write_inode(struct inode *inode, struct writeback_control *wbc);
 extern void pitix_evict_inode(struct inode *inode);
 

@@ -81,7 +81,7 @@ void pitix_evict_inode(struct inode *inode)
 	invalidate_inode_buffers(inode);
 	clear_inode(inode);
 	if (!inode->i_nlink)
-		pitix_destroy_inode(inode);
+		pitix_free_inode(inode->i_sb, inode->i_ino);
 }
 
 struct inode *pitix_alloc_inode(struct super_block *s)
@@ -139,7 +139,6 @@ struct pitix_inode *pitix_raw_inode(struct super_block *sb, ino_t ino, struct bu
 	}
 
 	pi = ((struct pitix_inode *) (*bh)->b_data);
-	// pr_info("[inode] inumber %ld block %d position %ld\n", ino, block, ino % pitix_inodes_per_block(sb));
 	return pi + ino % pitix_inodes_per_block(sb);
 }
 

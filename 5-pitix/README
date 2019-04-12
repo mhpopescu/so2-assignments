@@ -32,3 +32,16 @@ http://cursuri.cs.pub.ro/pipermail/so2/2018-April/007622.html
 
 pentru directoare: lookup, unlink, mkdir, rmdir, iterate
 pentru fișiere: create, truncate, funcția de bitmap
+
+pitix_new_inode nu e ok sa setez dupa ce il fac dirty
+	// FIXME 	MOVE HERE because of make inode_dirty
+	// inode_init_owner(inode, dir, mode);
++ ca nu pot verifica erorile *error = -ENOSPC;
+
+In loc sa tin in private info am urmat exemplul din pitix
+static inline struct pitix_inode_info *pitix_i(struct inode *inode)
+{
+	return container_of(inode, struct pitix_inode_info, vfs_inode);
+}
+
+desi poate era o idee am considerat ca pentru un simplu nivel de indirectare nu e nevoie sa ma complic cu arborele din minix. nu construiesc adancimea

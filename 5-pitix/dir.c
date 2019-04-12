@@ -52,8 +52,6 @@ int pitix_readdir(struct file *file, struct dir_context *ctx)
 	struct pitix_dir_entry *de;
 	int over;
 
-	// pr_info("pitix_readdir\n");
-
 	if (pos >= inode->i_size)
 		return 0;
 
@@ -74,7 +72,6 @@ int pitix_readdir(struct file *file, struct dir_context *ctx)
 			}
 		}
 	}
-	// pr_info("ENDpitix_readdir\n");
 
 	dir_put_page(page);
 	return 0;
@@ -116,7 +113,7 @@ struct pitix_dir_entry *pitix_find_entry(struct dentry *dentry, struct page **re
 		BUG();
 
 	kaddr = (char*)page_address(page);
-	limit = kaddr + PAGE_SIZE - dir_entry_size();
+	limit = kaddr + sb->s_blocksize - dir_entry_size();
 	for (p = kaddr; p <= limit; p = pitix_next_entry(p)) {
 		struct pitix_dir_entry *de = (struct pitix_dir_entry *)p;
 		namx = de->name;
@@ -197,17 +194,17 @@ int pitix_add_link(struct dentry *dentry, struct inode *inode)
 		goto out;
 	lock_page(page);
 	kaddr = (char*)page_address(page);
-	dir_end = kaddr + PAGE_SIZE;
-	limit = kaddr + PAGE_SIZE - dir_entry_size();
+	dir_end = kaddr + sb->s_blocksize;
+	limit = kaddr + sb->s_blocksize - dir_entry_size();
+
 	for (p = kaddr; p <= limit; p = pitix_next_entry(p)) {
 		de = (struct pitix_dir_entry *)p;
 		namx = de->name;
 		inumber = de->ino;
 
 		if (p == dir_end) {
-			/* We hit i_size */
-			de->ino = 0;
-			goto got_it;
+			err = -ENOMEM;
+			goto out_unlock;
 		}
 		if (!inumber)
 			goto got_it;
@@ -222,7 +219,7 @@ int pitix_add_link(struct dentry *dentry, struct inode *inode)
 	return -EINVAL;
 
 got_it:
-	pos = page_offset(page) + p - (char *)page_address(page);
+	pos = p - (char *)page_address(page);
 	err = pitix_prepare_chunk(page, pos, dir_entry_size());
 	if (err)
 		goto out_unlock;
@@ -271,6 +268,7 @@ int pitix_make_empty(struct inode *inode, struct inode *dir)
 	char *kaddr;
 	int err;
 	struct pitix_dir_entry *de;
+	struct super_block *sb = dir->i_sb;
 
 	if (!page)
 		return -ENOMEM;
@@ -281,7 +279,7 @@ int pitix_make_empty(struct inode *inode, struct inode *dir)
 	}
 
 	kaddr = kmap_atomic(page);
-	memset(kaddr, 0, PAGE_SIZE);
+	memset(kaddr, 0, sb->s_blocksize);
 
 	de = (struct pitix_dir_entry *)kaddr;
 	de->ino = inode->i_ino;
@@ -304,9 +302,9 @@ int pitix_empty_dir(struct inode *inode)
 {
 	struct page *page = NULL;
 	unsigned long i, npages = dir_pages(inode);
-	// struct minix_sb_info *sbi = minix_sb(inode->i_sb);
 	char *name;
 	__u32 inumber;
+	struct super_block *sb = inode->i_sb;
 
 	char *p, *kaddr, *limit;
 
@@ -315,7 +313,7 @@ int pitix_empty_dir(struct inode *inode)
 		BUG();
 
 	kaddr = (char *)page_address(page);
-	limit = kaddr + PAGE_SIZE - dir_entry_size();
+	limit = kaddr + sb->s_blocksize - dir_entry_size();
 	for (p = kaddr; p <= limit; p = pitix_next_entry(p)) {
 			struct pitix_dir_entry *de = (struct pitix_dir_entry *)p;
 			name = de->name;

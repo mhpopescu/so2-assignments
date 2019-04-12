@@ -72,8 +72,7 @@ static int pitix_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, d
 	if (!old_valid_dev(rdev))
 		return -EINVAL;
 
-// FIXME add err and mode as param
-	inode = pitix_new_inode(dir->i_sb);
+	inode = pitix_new_inode(dir, mode, &error);
 
 	if (inode) {
 		inode_init_owner(inode, dir, mode);
@@ -81,9 +80,6 @@ static int pitix_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, d
 		mark_inode_dirty(inode);
 		error = add_nondir(dentry, inode);
 	}
-	else // FIXME
-		error = -1;
-
 	return error;
 }
 
@@ -111,11 +107,9 @@ static int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 
 	inode_inc_link_count(dir);
 
-	inode = pitix_new_inode(dir->i_sb);
+	inode = pitix_new_inode(dir, S_IFDIR | mode, &err);
 	if (!inode)
 		goto out_dir;
-
-	inode_init_owner(inode, dir, S_IFDIR | mode);
 
 	pitix_set_inode(inode, 0);
 
