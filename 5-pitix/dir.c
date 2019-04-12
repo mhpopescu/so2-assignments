@@ -56,6 +56,7 @@ int pitix_readdir(struct file *file, struct dir_context *ctx)
 		return 0;
 
 	if (IS_ERR(page)){
+		// FIXME
 		pr_info("pitix_readdir page err\n");
 		BUG();
 	}
@@ -246,7 +247,7 @@ int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page)
 	loff_t pos = page_offset(page) + (char*)de - kaddr;
 	unsigned len = dir_entry_size();
 	int err;
-
+// pr_info("IN pitix_unlink\n");
 	lock_page(page);
 	err = pitix_prepare_chunk(page, pos, len);
 	if (err == 0) {
@@ -255,7 +256,7 @@ int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page)
 	} else {
 		unlock_page(page);
 	}
-
+// pr_info("OUT pitix_unlink\n");
 	dir_put_page(page);
 	inode->i_ctime = inode->i_mtime = current_time(inode);
 	mark_inode_dirty(inode);

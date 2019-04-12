@@ -80,8 +80,10 @@ void pitix_evict_inode(struct inode *inode)
 	}
 	invalidate_inode_buffers(inode);
 	clear_inode(inode);
+
 	if (!inode->i_nlink)
 		pitix_free_inode(inode->i_sb, inode->i_ino);
+
 }
 
 struct inode *pitix_alloc_inode(struct super_block *s)

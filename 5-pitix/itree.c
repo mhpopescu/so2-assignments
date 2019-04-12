@@ -12,8 +12,6 @@
 
 #include "pitix.h"
 
-static DEFINE_RWLOCK(pointers_lock);
-
 int pitix_get_block(struct inode *inode, sector_t block,
 			struct buffer_head *bh, int create)
 {
@@ -24,6 +22,8 @@ int pitix_get_block(struct inode *inode, sector_t block,
 	struct buffer_head *bl_bh;
 
 	/* not sure all checks are needed but respect minix checks */
+	if (create)
+		goto create;
 	if (block < 0) {
 		printk(LOG_LEVEL "PITIX-fs: block_to_path: block %lld < 0 on dev %pg\n",
 			block, inode->i_sb->s_bdev);
@@ -48,21 +48,21 @@ int pitix_get_block(struct inode *inode, sector_t block,
 		map_bh(bh, sb, b);
 		brelse(bl_bh);
 	}
-
+create:
 	if (create){
 		b = pitix_alloc_block(sb);
 		if (!b)
 			return -ENOMEM;
-
 		bl_bh = sb_getblk(inode->i_sb, psb->dzone_block + b);
 		lock_buffer(bl_bh);
 		memset(bl_bh->b_data, 0, bl_bh->b_size);
 		set_buffer_uptodate(bl_bh);
 		unlock_buffer(bl_bh);
 		mark_buffer_dirty_inode(bl_bh, inode);
-		set_buffer_new(bl_bh);
 
-		map_bh(bh, sb, b);
+
+		map_bh(bh, sb, psb->dzone_block + b);
+		set_buffer_new(bl_bh);
 		pii->direct_db[block] = b;
 	}
 	return 0;
@@ -76,31 +76,32 @@ void pitix_truncate (struct inode *inode)
 	__u16 *b;
 	struct pitix_inode_info *pii = pitix_i(inode);
 
-	block_truncate_page(inode->i_mapping, inode->i_size, pitix_get_block);
+	block_truncate_page(inode->i_mapping, 0, pitix_get_block);
 
 	for (i = 0; i < INODE_DIRECT_DATA_BLOCKS; ++i)
 		if (pii->direct_db[i]) {
-			pitix_free_block(sb, i);
+			pitix_free_block(sb, pii->direct_db[i]);
 			pii->direct_db[i] = 0;
 		}
-	mark_inode_dirty(inode);
-
 	inode->i_mtime = inode->i_ctime = current_time(inode);
-	if (pii->indirect_db) {
-		struct buffer_head *bh = sb_bread(sb, psb->dzone_block + pii->indirect_db);
-		pii->indirect_db = 0;
+	mark_inode_dirty(inode);
+// pr_info("OUT pitix_truncate\n");
+	// if (pii->indirect_db) {
+	// 	struct buffer_head *bh = sb_bread(sb, psb->dzone_block + pii->indirect_db);
+	// 	pii->indirect_db = 0;
 
-		if (!bh)
-			printk("Unable to read block\n");
+	// 	if (!bh)
+	// 		printk("Unable to read block\n");
 
-		b = (__u16 *)bh->b_data;
-		for (i = 0; i < sb->s_blocksize/2; ++i) {
-			if (!*b)
-				break;
-			pitix_free_block(sb, *b);
-			b++;
-		}
-		memset(bh->b_data, 0, sb->s_blocksize);
-		mark_buffer_dirty_inode(bh, inode);
-	}
+	// 	b = (__u16 *)bh->b_data;
+	// 	for (i = 0; i < sb->s_blocksize/2; ++i) {
+	// 		if (!*b)
+	// 			break;
+	// 		pr_info("block trunc %d\n", b);
+	// 		pitix_free_block(sb, *b);
+	// 		b++;
+	// 	}
+	// 	memset(bh->b_data, 0, sb->s_blocksize);
+	// 	mark_buffer_dirty_inode(bh, inode);
+	// }
 }

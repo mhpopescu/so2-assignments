@@ -143,7 +143,6 @@ static int pitix_unlink(struct inode *dir, struct dentry *dentry)
 	struct inode *inode = d_inode(dentry);
 	struct page *page;
 	struct pitix_dir_entry *de;
-
 	de = pitix_find_entry(dentry, &page);
 	if (!de)
 		goto end_unlink;
@@ -151,7 +150,6 @@ static int pitix_unlink(struct inode *dir, struct dentry *dentry)
 	err = pitix_delete_entry(de, page);
 	if (err)
 		goto end_unlink;
-
 	inode->i_ctime = dir->i_ctime;
 	inode_dec_link_count(inode);
 end_unlink:
