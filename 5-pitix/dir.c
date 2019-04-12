@@ -203,10 +203,6 @@ int pitix_add_link(struct dentry *dentry, struct inode *inode)
 		namx = de->name;
 		inumber = de->ino;
 
-		if (p == dir_end) {
-			err = -ENOMEM;
-			goto out_unlock;
-		}
 		if (!inumber)
 			goto got_it;
 		err = -EEXIST;
@@ -214,10 +210,12 @@ int pitix_add_link(struct dentry *dentry, struct inode *inode)
 			goto out_unlock;
 	}
 
+	err = -ENOMEM;
+	goto out_unlock;
 	unlock_page(page);
-	dir_put_page(page);
-	BUG();
-	return -EINVAL;
+	// dir_put_page(page);
+	// BUG();
+	// return -EINVAL;
 
 got_it:
 	pos = p - (char *)page_address(page);
@@ -247,7 +245,6 @@ int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page)
 	loff_t pos = page_offset(page) + (char*)de - kaddr;
 	unsigned len = dir_entry_size();
 	int err;
-// pr_info("IN pitix_unlink\n");
 	lock_page(page);
 	err = pitix_prepare_chunk(page, pos, len);
 	if (err == 0) {
@@ -256,7 +253,6 @@ int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page)
 	} else {
 		unlock_page(page);
 	}
-// pr_info("OUT pitix_unlink\n");
 	dir_put_page(page);
 	inode->i_ctime = inode->i_mtime = current_time(inode);
 	mark_inode_dirty(inode);
