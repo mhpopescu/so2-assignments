@@ -20,25 +20,38 @@ int pitix_get_block(struct inode *inode, sector_t block,
 	struct super_block *sb = inode->i_sb;
 	struct pitix_super_block *psb = pitix_sb(sb);
 	struct pitix_inode_info *pii = pitix_i(inode);
+	__u16 b;
 
-	// pr_info("pitix_get_block \n");
-	if (block > get_blocks(sb))
+	if (block < 0) {
+		printk("PITIX-fs: block_to_path: block %lld < 0 on dev %pg\n",
+			block, inode->i_sb->s_bdev);
 		return 1;
-
-	if (block < INODE_DIRECT_DATA_BLOCKS) {
-		int b = psb->dzone_block + pii->data_blocks[block];
-		// bh = sb_bread(sb, b);
-		// if (!bh) {
-		// 	printk("Unable to read inode block\n");
-		// 	return 1;
-		// }
+	} else if (block >= sb->s_blocksize/2 + INODE_DIRECT_DATA_BLOCKS){
+		printk("PITIX-fs: pitix_get_block: "
+			       "block %lld too big on dev %pg\n",
+				block, inode->i_sb->s_bdev);
+		return 1;
+	} else if (block < INODE_DIRECT_DATA_BLOCKS && (!block || pii->direct_db[block])) {
+		b = psb->dzone_block + pii->direct_db[block];
 		map_bh(bh, sb, b);
-		// pr_info("pitix_get_block %d \n", b);
-	}
-	// else {
-	// 	bh = sb_bread(sb, psb->dzone_block[INDIRECT_BLOCK] block);
+	} else if (pii->indirect_db) {
+		struct buffer_head *bl_bh = sb_bread(sb, psb->dzone_block + pii->indirect_db);
+		if (!bl_bh) {
+			printk("Unable to read block\n");
+			return 1;
+		}
 
-	// }
+		b = *((__u16 *)bl_bh->b_data + block - INODE_DIRECT_DATA_BLOCKS);
+		if (block >= sb->s_blocksize/2 + INODE_DIRECT_DATA_BLOCKS){
+			printk("PITIX-fs: pitix_get_block: "
+				       "block %lld too big on dev %pg\n",
+					block, inode->i_sb->s_bdev);
+			return 1;
+		}
+		b += psb->dzone_block;
+		map_bh(bh, sb, b);
+		brelse(bl_bh);
+	}
 	return 0;
 }
 

@@ -27,7 +27,6 @@ static struct dentry *pitix_lookup(struct inode *dir, struct dentry *dentry, uns
 		return ERR_PTR(-ENAMETOOLONG);
 
 	ino = pitix_inode_by_name(dentry, 0);
-	pr_info("[lookup] inode %ld\n", ino);
 	if (ino)
 		inode = pitix_iget(dir->i_sb, ino);
 	return d_splice_alias(inode, dentry);

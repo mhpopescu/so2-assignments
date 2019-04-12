@@ -29,7 +29,6 @@ static inline void dir_put_page(struct page *page)
 static struct page *dir_get_page(struct inode *dir)
 {
 	struct address_space *mapping = dir->i_mapping;
-	// pr_info("dir_get_page block %d\n", pitix_i(dir)->data_blocks[0]);
 	struct page *page = read_mapping_page(mapping, 0, NULL);
 	if (!IS_ERR(page))
 		kmap(page);
@@ -40,44 +39,6 @@ static inline void *pitix_next_entry(void *de)
 {
 	return (void*)((char*)de + dir_entry_size());
 }
-
-// int pitix_readdir(struct file *file, struct dir_context *ctx)
-// {
-// 	struct buffer_head *bh = NULL;
-// 	struct pitix_dir_entry *de;
-// 	struct inode *inode = file_inode(file);
-// 	struct pitix_inode_info *pii = pitix_i(inode);
-// 	struct super_block *sb = inode->i_sb;
-// 	int err = 0;
-// 	int over;
-
-// /* read data block for directory inode */
-// bh = sb_bread(sb, pitix_sb(sb)->dzone_block + pii->data_blocks[0]);
-// pr_info("page %d ", pitix_sb(sb)->dzone_block + pii->data_blocks[0]);
-// if (bh == NULL) {
-// 	printk(LOG_LEVEL "could not read block\n");
-// 	err = -ENOMEM;
-// 	goto out_bad_sb;
-// }
-
-// for (; ctx->pos < dir_entries_per_block(sb); ctx->pos++) {
-// 	de = (struct pitix_dir_entry *) bh->b_data + ctx->pos;
-// 	if (de->ino != 0) {
-// 		over = dir_emit(ctx, de->name, PITIX_NAME_LEN,
-// 				de->ino, DT_UNKNOWN);
-// 		if (over) {
-// 			ctx->pos += 1;
-// 			goto done;
-// 		}
-// 	}
-// }
-
-// done:
-// 	brelse(bh);
-// out_bad_sb:
-// 	return err;
-// }
-
 
 int pitix_readdir(struct file *file, struct dir_context *ctx)
 {

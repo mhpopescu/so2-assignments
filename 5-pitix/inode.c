@@ -160,8 +160,8 @@ static struct buffer_head *pitix_update_inode(struct inode *inode)
 	raw_inode->time = inode->i_mtime.tv_sec;
 
 	for (i = 0; i < INODE_DIRECT_DATA_BLOCKS; i++)
-		raw_inode->direct_data_blocks[i] = pi->data_blocks[i];
-	raw_inode->indirect_data_block = pi->data_blocks[i];
+		raw_inode->direct_data_blocks[i] = pi->direct_db[i];
+	raw_inode->indirect_data_block = pi->indirect_db;
 
 	mark_buffer_dirty(bh);
 	return bh;
@@ -240,8 +240,8 @@ struct inode *pitix_iget(struct super_block *sb, unsigned long inumber)
 
 	pii = pitix_i(inode);
 	for (i = 0; i < INODE_DIRECT_DATA_BLOCKS; ++i)
-		pii->data_blocks[i] = raw_inode->direct_data_blocks[i];
-	pii->data_blocks[i] = raw_inode->indirect_data_block;
+		pii->direct_db[i] = raw_inode->direct_data_blocks[i];
+	pii->indirect_db = raw_inode->indirect_data_block;
 
 	brelse(bh);
 	unlock_new_inode(inode);
@@ -279,13 +279,13 @@ int pitix_fill_super(struct super_block *sb, void *data, int silent)
 
 	sb->s_fs_info = psb;
 
-	pr_info("bits %d imap %d dmap %d izone %d dzone %d bfree %d ffree %d PAGE_SIZE %ld\n", 
-		psb->block_size_bits, psb->imap_block, psb->dmap_block, 
-		psb->izone_block, psb->dzone_block, psb->bfree, psb->ffree,
-		PAGE_SIZE);
+	
 	if (!sb_set_blocksize(sb, (1 << psb->block_size_bits)))
 		goto out_bad_blocksize;
-
+pr_info("bits %d blockSZ %ld imap %d dmap %d izone %d dzone %d bfree %d ffree %d PAGE_SIZE %ld\n", 
+		psb->block_size_bits, sb->s_blocksize, psb->imap_block, psb->dmap_block, 
+		psb->izone_block, psb->dzone_block, psb->bfree, psb->ffree,
+		PAGE_SIZE);
 	sb->s_magic = psb->magic;
 	sb->s_op = &pitix_sops;
 

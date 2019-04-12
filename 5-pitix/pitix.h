@@ -4,8 +4,6 @@
 #define PITIX_MAGIC			0x58495450 /* ascii little endian for PTIX */
 #define IZONE_BLOCKS		32
 #define INODE_DIRECT_DATA_BLOCKS 5
-#define INDIRECT_BLOCK 		INODE_DIRECT_DATA_BLOCKS
-#define INODE_DATA_BLOCKS 	6
 #define PITIX_NAME_LEN		16
 
 #define LOG_LEVEL			KERN_ALERT
@@ -58,10 +56,10 @@ struct pitix_inode {
 
 /* 
  * PITIX inode in memory
- * 5 (direct data blocks) + 1 (indirect data block)
  */
 struct pitix_inode_info {
-	__u16 data_blocks[INODE_DATA_BLOCKS];
+	__u16 direct_db[INODE_DIRECT_DATA_BLOCKS];
+	__u16 indirect_db;
 	struct inode vfs_inode;
 };
 

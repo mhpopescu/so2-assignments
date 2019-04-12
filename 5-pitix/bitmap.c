@@ -41,6 +41,7 @@ struct inode *pitix_new_inode(struct super_block *sb)
 	long bits_per_zone = get_blocks(sb);
 	struct pitix_super_block *psb = pitix_sb(sb);
 	unsigned long j;
+	int i;
 
 	if (!inode) {
 		// *error = -ENOMEM;
@@ -75,8 +76,10 @@ struct inode *pitix_new_inode(struct super_block *sb)
 	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 	inode->i_blocks = 0;
 
-	memset(&pitix_i(inode)->data_blocks, 0, 
-		INODE_DATA_BLOCKS * sizeof(pitix_i(inode)->data_blocks[0]));
+	for (i = 0; i < INODE_DIRECT_DATA_BLOCKS; ++i)
+		pitix_i(inode)->direct_db[i] = 0;
+	pitix_i(inode)->indirect_db = 0;
+
 	insert_inode_hash(inode);
 	mark_inode_dirty(inode);
 
