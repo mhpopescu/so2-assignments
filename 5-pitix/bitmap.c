@@ -60,6 +60,8 @@ struct inode *pitix_new_inode(const struct inode *dir, umode_t mode, int *error)
 		return NULL;
 	}
 	pitix_test_and_set_bit(j, psb->imap);
+	psb->ffree--;
+	
 	spin_unlock(&bitmap_lock);
 
 	mark_buffer_dirty(psb->imap_bh);
@@ -76,7 +78,6 @@ struct inode *pitix_new_inode(const struct inode *dir, umode_t mode, int *error)
 	insert_inode_hash(inode);
 	mark_inode_dirty(inode);
 
-	psb->ffree--;
 
 	*error = 0;
 	return inode;
@@ -92,9 +93,9 @@ int pitix_alloc_block(struct super_block *sb)
 	j = pitix_find_first_zero_bit(psb->dmap, max_blocks);
 	if (j < max_blocks) {
 		pitix_set_bit(j, psb->dmap);
+		psb->bfree--;	
 		spin_unlock(&bitmap_lock);
 		mark_buffer_dirty(psb->dmap_bh);
-		psb->bfree--;	
 		return j;
 	}
 
@@ -117,10 +118,10 @@ void pitix_free_block(struct super_block *sb, int block)
 	if (!pitix_test_and_clear_bit(block, psb->dmap))
 		printk(LOG_LEVEL "pitix_free_block (%s:%d): bit already cleared\n",
 		       sb->s_id, block);
+	psb->bfree++;	
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(psb->dmap_bh);
 	
-	psb->bfree++;	
 }
 
 void pitix_free_inode(struct super_block *sb, int ino)
@@ -135,8 +136,8 @@ void pitix_free_inode(struct super_block *sb, int ino)
 	spin_lock(&bitmap_lock);
 	if (!pitix_test_and_clear_bit(ino, psb->imap))
 		printk(LOG_LEVEL "pitix_free_inode: ino %d already cleared\n", ino);
+	psb->ffree++;
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(psb->imap_bh);
 
-	psb->ffree++;
 }

@@ -212,7 +212,7 @@ int pitix_add_link(struct dentry *dentry, struct inode *inode)
 
 	err = -ENOMEM;
 	goto out_unlock;
-	unlock_page(page);
+	// unlock_page(page);
 	// dir_put_page(page);
 	// BUG();
 	// return -EINVAL;
@@ -305,16 +305,16 @@ int pitix_empty_dir(struct inode *inode)
 	kaddr = (char *)page_address(page);
 	limit = kaddr + sb->s_blocksize - dir_entry_size();
 	for (p = kaddr; p <= limit; p = pitix_next_entry(p)) {
-			struct pitix_dir_entry *de = (struct pitix_dir_entry *)p;
-			name = de->name;
-			inumber = de->ino;
+		struct pitix_dir_entry *de = (struct pitix_dir_entry *)p;
+		name = de->name;
+		inumber = de->ino;
 
 		if (inumber != 0) {
-				goto not_empty;
+			goto not_empty;
 		}
 	}
 	dir_put_page(page);
-	return -ENOMEM;
+	return 1;
 
 not_empty:
 	dir_put_page(page);
