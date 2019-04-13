@@ -263,13 +263,13 @@ int pitix_make_empty(struct inode *inode, struct inode *dir)
 {
 	struct page *page = grab_cache_page(inode->i_mapping, 0);
 	char *kaddr;
-	int err;
+	int err = 0;
 	struct pitix_dir_entry *de;
 	struct super_block *sb = dir->i_sb;
 
 	if (!page)
 		return -ENOMEM;
-	err = pitix_prepare_chunk(page, 0, 2 * dir_entry_size());
+	err = pitix_prepare_chunk(page, 0, 0);
 	if (err) {
 		unlock_page(page);
 		goto fail;
@@ -277,16 +277,9 @@ int pitix_make_empty(struct inode *inode, struct inode *dir)
 
 	kaddr = kmap_atomic(page);
 	memset(kaddr, 0, sb->s_blocksize);
-
-	de = (struct pitix_dir_entry *)kaddr;
-	de->ino = inode->i_ino;
-	strcpy(de->name, ".");
-	de = pitix_next_entry(de);
-	de->ino = dir->i_ino;
-	strcpy(de->name, "..");
 	kunmap_atomic(kaddr);
 
-	err = dir_commit_chunk(page, 0, 2 * dir_entry_size());
+	err = dir_commit_chunk(page, 0, 0);
 fail:
 	put_page(page);
 	return err;
@@ -317,20 +310,11 @@ int pitix_empty_dir(struct inode *inode)
 			inumber = de->ino;
 
 		if (inumber != 0) {
-			/* check for . and .. */
-			if (name[0] != '.')
-				goto not_empty;
-			if (!name[1]) {
-				if (inumber != inode->i_ino)
-					goto not_empty;
-			} else if (name[1] != '.')
-				goto not_empty;
-			else if (name[2])
 				goto not_empty;
 		}
 	}
 	dir_put_page(page);
-	return 1;
+	return -ENOMEM;
 
 not_empty:
 	dir_put_page(page);

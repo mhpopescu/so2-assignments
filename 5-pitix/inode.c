@@ -111,8 +111,8 @@ static int pitix_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_blocks = get_blocks(sb); /* Total data blocks in filesystem */
 	buf->f_bfree = psb->bfree;		/* Free blocks in filesystem */
 	buf->f_bavail = buf->f_bfree;	/* Free blocks available to unprivileged user */
-	buf->f_files = get_inodes(sb) - psb->ffree;
-	buf->f_ffree = psb->ffree;
+	buf->f_files = get_inodes(sb);	/* Total file nodes in filesystem */
+	buf->f_ffree = psb->ffree;		/* Free file nodes in filesystem */
 	buf->f_namelen = PITIX_NAME_LEN;
 	buf->f_fsid.val[0] = (u32)id;
 	buf->f_fsid.val[1] = (u32)(id >> 32);
