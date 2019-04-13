@@ -99,34 +99,46 @@ void pitix_truncate(struct inode *inode)
 	__u16 *b;
 	struct pitix_inode_info *pii = pitix_i(inode);
 
-	block_truncate_page(inode->i_mapping, 0, pitix_get_block);
+	int block = (__u32) inode->i_size / sb->s_blocksize + 1;
+	if ((__u32) inode->i_size % sb->s_blocksize == 0)
+		block--;
 
-	for (i = 0; i < INODE_DIRECT_DATA_BLOCKS; ++i)
+	block_truncate_page(inode->i_mapping, inode->i_size, pitix_get_block);
+
+	for (i = block; i < INODE_DIRECT_DATA_BLOCKS; ++i)
 		if (pii->direct_db[i]) {
 			pitix_free_block(sb, pii->direct_db[i]);
 			pii->direct_db[i] = 0;
 		}
-	inode->i_mtime = inode->i_ctime = current_time(inode);
-	mark_inode_dirty(inode);
+
+	block -= INODE_DIRECT_DATA_BLOCKS;
+	if (block < 0)
+		block = 0;
+	/* if there are not allocated all direct blocks then indirect is not also */
 	if (pii->indirect_db) {
 		struct buffer_head *bh = sb_bread(sb, psb->dzone_block + pii->indirect_db);
 
 		if (!bh)
 			printk(LOG_LEVEL "Unable to read block\n");
 
-		b = (__u16 *)bh->b_data;
-		for (i = 0; i < sb->s_blocksize/2; ++i) {
-			// FIXME check if it is still allocated
+		for (i = block; i < sb->s_blocksize/2; ++i) {
+			b = (__u16 *)bh->b_data + i;
+
 			if (!*b)
 				break;
 			pitix_free_block(sb, *b);
-			b++;
 		}
-		memset(bh->b_data, 0, sb->s_blocksize);
+		b = (__u16 *)bh->b_data + block;
+		memset(b, 0, sb->s_blocksize - block * 2);
 		mark_buffer_dirty_inode(bh, inode);
+		brelse(bh);
+
+		if (block == 0) {
+			pitix_free_block(sb, pii->indirect_db);
+			pii->indirect_db = 0;
+		}
 	}
 
-	pitix_free_block(sb, pii->indirect_db);
-	pii->indirect_db = 0;
-
+	inode->i_mtime = inode->i_ctime = current_time(inode);
+	mark_inode_dirty(inode);
 }

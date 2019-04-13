@@ -242,7 +242,7 @@ int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page)
 {
 	struct inode *inode = page->mapping->host;
 	char *kaddr = page_address(page);
-	loff_t pos = page_offset(page) + (char*)de - kaddr;
+	loff_t pos = (char*)de - kaddr;
 	unsigned len = dir_entry_size();
 	int err;
 	lock_page(page);

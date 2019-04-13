@@ -76,6 +76,7 @@ void pitix_evict_inode(struct inode *inode)
 {
 	truncate_inode_pages_final(&inode->i_data);
 	if (!inode->i_nlink) {
+		inode->i_size = 0;
 		pitix_truncate(inode);
 	}
 	invalidate_inode_buffers(inode);
@@ -97,8 +98,6 @@ struct inode *pitix_alloc_inode(struct super_block *s)
 
 	return &pii->vfs_inode;
 }
-
-
 
 static int pitix_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
@@ -187,7 +186,7 @@ int pitix_write_inode(struct inode *inode, struct writeback_control *wbc)
 			err = -EIO;
 		}
 	}
-	brelse (bh);
+	brelse(bh);
 	return err;
 }
 
@@ -202,6 +201,30 @@ int pitix_getattr(const struct path *path, struct kstat *stat,
 	stat->blocks = get_blocks(sb);
 
 	stat->blksize = sb->s_blocksize;
+	return 0;
+}
+
+static int pitix_setattr(struct dentry *dentry, struct iattr *attr)
+{
+	struct inode *inode = d_inode(dentry);
+	int error;
+
+	error = setattr_prepare(dentry, attr);
+	if (error)
+		return error;
+
+	if ((attr->ia_valid & ATTR_SIZE) &&
+	    attr->ia_size != i_size_read(inode)) {
+		error = inode_newsize_ok(inode, attr->ia_size);
+		if (error)
+			return error;
+
+		truncate_setsize(inode, attr->ia_size);
+		pitix_truncate(inode);
+	}
+
+	setattr_copy(inode, attr);
+	mark_inode_dirty(inode);
 	return 0;
 }
 
@@ -250,6 +273,12 @@ struct inode *pitix_iget(struct super_block *sb, unsigned long inumber)
 	return inode;
 }
 
+static int pitix_remount(struct super_block *sb, int *flags, char *data)
+{
+	sync_filesystem(sb);
+	return 0;
+}
+
 static void pitix_put_super(struct super_block *sb)
 {
 	struct pitix_super_block *psb = pitix_sb(sb);
@@ -257,6 +286,13 @@ static void pitix_put_super(struct super_block *sb)
 	/* Free superblock buffer head. */
 	mark_buffer_dirty(psb->sb_bh);
 	brelse(psb->sb_bh);
+	brelse(psb->imap_bh);
+	brelse(psb->dmap_bh);
+	sb->s_fs_info = NULL;
+
+pr_info("bits %d blockSZ %ld imap %d dmap %d izone %d dzone %d bfree %d ffree %d PAGE_SIZE %ld\n", 
+		psb->block_size_bits, sb->s_blocksize, psb->imap_block, psb->dmap_block, 
+		psb->izone_block, psb->dzone_block, psb->bfree, psb->ffree, PAGE_SIZE);
 
 	printk(KERN_DEBUG "released superblock resources\n");
 }
@@ -273,20 +309,27 @@ int pitix_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_bad_sb;
 
 	psb = (struct pitix_super_block *) bh->b_data;
-	psb->sb_bh = bh; 
 
 	if (psb->magic != PITIX_MAGIC)
 		goto out_bad_magic;
 
-	sb->s_fs_info = psb;
 
-	
 	if (!sb_set_blocksize(sb, (1 << psb->block_size_bits)))
 		goto out_bad_blocksize;
+	brelse(bh);
+
+	bh = sb_bread(sb, PITIX_SUPER_BLOCK);
+	if (bh == NULL)
+		goto out_bad_sb;
+
+	psb = (struct pitix_super_block *) bh->b_data;
+	psb->sb_bh = bh; 
+	sb->s_fs_info = psb;
+
+
 pr_info("bits %d blockSZ %ld imap %d dmap %d izone %d dzone %d bfree %d ffree %d PAGE_SIZE %ld\n", 
 		psb->block_size_bits, sb->s_blocksize, psb->imap_block, psb->dmap_block, 
-		psb->izone_block, psb->dzone_block, psb->bfree, psb->ffree,
-		PAGE_SIZE);
+		psb->izone_block, psb->dzone_block, psb->bfree, psb->ffree, PAGE_SIZE);
 	sb->s_magic = psb->magic;
 	sb->s_op = &pitix_sops;
 
@@ -362,6 +405,7 @@ struct file_operations pitix_file_operations = {
 
 struct inode_operations pitix_file_inode_operations = {
 	.getattr	= pitix_getattr,
+	.setattr	= pitix_setattr,
 };
 
 struct super_operations pitix_sops = {
@@ -371,6 +415,7 @@ struct super_operations pitix_sops = {
 	.evict_inode	= pitix_evict_inode,
 	.statfs			= pitix_statfs,
 	.put_super		= pitix_put_super,
+	.remount_fs		= pitix_remount,
 };
 
 static int __init pitix_init(void)

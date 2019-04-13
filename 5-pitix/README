@@ -45,3 +45,24 @@ static inline struct pitix_inode_info *pitix_i(struct inode *inode)
 }
 
 desi poate era o idee am considerat ca pentru un simplu nivel de indirectare nu e nevoie sa ma complic cu arborele din minix. nu construiesc adancimea
+
+
+
+http://cursuri.cs.pub.ro/pipermail/so2/2016-April/007178.html
+Noua dimensiune este în câmpul i_size din inode. Dacă împarți acea
+dimensiune la sb->s_blocksize și adaugi 1 (pentru rest) obții câte
+blocuri va avea acum fișierul. Ce este peste se șterge.
+
+>> Mai exact, setattr imi este apelat (fie daca scriu intr-un fisier, fie la
+>> cp din teste) si eu apelez pitix_truncate (care aloca sau dealoca blocuri
+>> in fc de i_size). Doar ca spre deosebire de truncate (din fs unde spunea ca
+>> i_size va avea noua dimensiune), setattr nu imi seteaza i_size (il lasa cum
+>> era).
+>>
+>> Cum accesez noua dimensiune dorita a fisierului pt a ii face truncate
+>> corect? [cred ca de aici este problema cu bfree]
+
+Acum am ajuns aici :-) Văd că folosești corect i_size.
+
+Funcția pitix_setattr, ar trebui să fie identică cu cea din minix[1], nu
+ar trebui să ai probleme legat de aia.
