@@ -181,5 +181,4 @@ struct inode_operations pitix_dir_inode_operations = {
 	// .rename		= minix_rename,
 	.getattr	= pitix_getattr,
 	.mknod		= pitix_mknod,
-
 };

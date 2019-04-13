@@ -94,11 +94,11 @@ int pitix_alloc_block(struct super_block *sb)
 		pitix_set_bit(j, psb->dmap);
 		spin_unlock(&bitmap_lock);
 		mark_buffer_dirty(psb->dmap_bh);
+		psb->bfree--;	
 		return j;
 	}
 
 	spin_unlock(&bitmap_lock);
-
 	printk(LOG_LEVEL "no more free blocks\n");
 	return 0;
 }

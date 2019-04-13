@@ -108,10 +108,10 @@ static int pitix_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 	buf->f_type = sb->s_magic;
 	buf->f_bsize = sb->s_blocksize;
-	// buf->f_blocks = (sbi->s_nzones - sbi->s_firstdatazone) << sbi->s_log_zone_size;
-	buf->f_bfree = psb->bfree;
-	buf->f_bavail = buf->f_bfree;
-	buf->f_files = get_blocks(sb);
+	buf->f_blocks = get_blocks(sb); /* Total data blocks in filesystem */
+	buf->f_bfree = psb->bfree;		/* Free blocks in filesystem */
+	buf->f_bavail = buf->f_bfree;	/* Free blocks available to unprivileged user */
+	buf->f_files = get_inodes(sb) - psb->ffree;
 	buf->f_ffree = psb->ffree;
 	buf->f_namelen = PITIX_NAME_LEN;
 	buf->f_fsid.val[0] = (u32)id;

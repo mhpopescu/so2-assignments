@@ -110,7 +110,6 @@ void pitix_truncate(struct inode *inode)
 	mark_inode_dirty(inode);
 	if (pii->indirect_db) {
 		struct buffer_head *bh = sb_bread(sb, psb->dzone_block + pii->indirect_db);
-		pii->indirect_db = 0;
 
 		if (!bh)
 			printk(LOG_LEVEL "Unable to read block\n");
@@ -126,4 +125,8 @@ void pitix_truncate(struct inode *inode)
 		memset(bh->b_data, 0, sb->s_blocksize);
 		mark_buffer_dirty_inode(bh, inode);
 	}
+
+	pitix_free_block(sb, pii->indirect_db);
+	pii->indirect_db = 0;
+
 }
