@@ -167,8 +167,8 @@ do_create()
         fblocks=$(($fblocks-$current_file_blocks))
     fi
 
-    # check_file $1 $2 $3 $4 $5 -f /tmp/pitix.rw/
-    # check_statfs
+    check_file $1 $2 $3 $4 $5 -f /tmp/pitix.rw/
+    check_statfs
 }
 
 # $1 dir
@@ -291,7 +291,7 @@ test_rw()
 
     check_false "dir overflow" touch /tmp/pitix.mnt/lots_of_files/the_drop
 
-    # check_statfs
+    check_statfs
 
     check_true "umounting fs" umount /tmp/pitix.mnt/
     check_true "mounting fs" mount -t pitix /tmp/pitix.loop /tmp/pitix.mnt/ -o loop
@@ -299,32 +299,32 @@ test_rw()
         exit 1
     fi
 
-    # check_statfs
+    check_statfs
 
     for i in $(seq 0 $(($de_per_dir-1))); do
         check_file lots_of_files/file$i $(($i*1024)) 0$(($i%8))$((($i/2)%8))$((($i/4)%8)) $(($i%100)) $(($i*32%100)) -f /tmp/pitix.rw/
         if let "$(($i%2)) == 0"; then
             do_truncate lots_of_files/file$i
-        # else
-        #     do_unlink lots_of_files/file$i
-        #     do_false_unlink lots_of_files/file$i
+        else
+            do_unlink lots_of_files/file$i
+            do_false_unlink lots_of_files/file$i
         fi
     done
 
-    # for i in $(seq 1 $(($de_per_dir-1))); do
-    #     do_mkdir dir$i 0666 0 0
-    #     do_create dir$i/dummy 4096 0666 0 0
-    # done
+    for i in $(seq 1 $(($de_per_dir-1))); do
+        do_mkdir dir$i 0666 0 0
+        do_create dir$i/dummy 4096 0666 0 0
+    done
 
-    # for i in $(seq 1 $(($de_per_dir-1))); do
-    #     do_false_rmdir dir$i
-    #     do_unlink dir$i/dummy
-    #     do_rmdir dir$i
-    # done
+    for i in $(seq 1 $(($de_per_dir-1))); do
+        do_false_rmdir dir$i
+        do_unlink dir$i/dummy
+        do_rmdir dir$i
+    done
 
 
-    # check_false "module unloading" rmmod pitix
-    # check_true "umounting fs" umount /tmp/pitix.mnt/
+    check_false "module unloading" rmmod pitix
+    check_true "umounting fs" umount /tmp/pitix.mnt/
 }
 
 test_ro()
@@ -363,16 +363,16 @@ cleanup_world
 
 mkdir -p /tmp
 
-# check_true  "module loading" insmod pitix.ko
-# check_true  "test /proc/filesystems" grep pitix /proc/filesystems
-# test_ro
-# check_true "module unloading" rmmod pitix
+check_true  "module loading" insmod pitix.ko
+check_true  "test /proc/filesystems" grep pitix /proc/filesystems
+test_ro
+check_true "module unloading" rmmod pitix
 
 check_true  "module loading" insmod pitix.ko
 check_true  "test /proc/filesystems" grep pitix /proc/filesystems
 test_rw 512
-# check_true "module unloading" rmmod pitix
+check_true "module unloading" rmmod pitix
 
-# cleanup_world
+cleanup_world
 
 # vim: set tabstop=4 shiftwidth=4:

@@ -269,7 +269,7 @@ int pitix_make_empty(struct inode *inode, struct inode *dir)
 
 	if (!page)
 		return -ENOMEM;
-	err = pitix_prepare_chunk(page, 0, 0);
+	err = pitix_prepare_chunk(page, 0, sb->s_blocksize);
 	if (err) {
 		unlock_page(page);
 		goto fail;
@@ -279,7 +279,7 @@ int pitix_make_empty(struct inode *inode, struct inode *dir)
 	memset(kaddr, 0, sb->s_blocksize);
 	kunmap_atomic(kaddr);
 
-	err = dir_commit_chunk(page, 0, 0);
+	err = dir_commit_chunk(page, 0, sb->s_blocksize);
 fail:
 	put_page(page);
 	return err;
