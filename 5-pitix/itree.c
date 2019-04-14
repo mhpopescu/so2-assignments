@@ -21,6 +21,8 @@ int pitix_get_block(struct inode *inode, sector_t block,
 	__u16 b;
 	struct buffer_head *bl_bh;
 
+	// pr_info("pitix_get_block %lld %d\n", block, create);
+
 	/* not sure all checks are needed but respect minix checks */
 	if (block < 0) {
 		printk(LOG_LEVEL "PITIX-fs: block_to_path: block %lld < 0 on dev %pg\n",
@@ -35,7 +37,7 @@ int pitix_get_block(struct inode *inode, sector_t block,
 
 	if (create)
 		goto create;
-	if (block < INODE_DIRECT_DATA_BLOCKS && (!block || pii->direct_db[block])) {
+	if (block < INODE_DIRECT_DATA_BLOCKS) {
 		b = psb->dzone_block + pii->direct_db[block];
 		map_bh(bh, sb, b);
 	} else if (pii->indirect_db) {
@@ -55,16 +57,7 @@ create:
 		b = pitix_alloc_block(sb);
 		if (!b)
 			return -ENOMEM;
-		bl_bh = sb_getblk(inode->i_sb, psb->dzone_block + b);
-		lock_buffer(bl_bh);
-		memset(bl_bh->b_data, 0, bl_bh->b_size);
-		set_buffer_uptodate(bl_bh);
-		unlock_buffer(bl_bh);
-		mark_buffer_dirty_inode(bl_bh, inode);
-
-		map_bh(bh, sb, psb->dzone_block + b);
-		set_buffer_new(bl_bh);
-
+		
 		if (block < INODE_DIRECT_DATA_BLOCKS)
 			pii->direct_db[block] = b;
 		else {
@@ -82,11 +75,24 @@ create:
 			if (!bhh) {
 				printk("Unable to read inode block\n");
 			}
+			if (block == INODE_DIRECT_DATA_BLOCKS)
+				memset(bhh->b_data, 0, bhh->b_size);
 
-			*((__u16 *)bhh->b_data + block - INODE_DIRECT_DATA_BLOCKS) = b;
+			((__u16 *)bhh->b_data)[block - INODE_DIRECT_DATA_BLOCKS] = b;
 			mark_buffer_dirty(bhh);
 			brelse(bhh);
 		}
+
+		bl_bh = sb_getblk(inode->i_sb, psb->dzone_block + b);
+		lock_buffer(bl_bh);
+		memset(bl_bh->b_data, 0, bl_bh->b_size);
+		set_buffer_uptodate(bl_bh);
+		unlock_buffer(bl_bh);
+		mark_buffer_dirty_inode(bl_bh, inode);
+
+		set_buffer_new(bh);
+		map_bh(bh, sb, psb->dzone_block + b);
+
 	}
 	return 0;
 }
@@ -99,9 +105,9 @@ void pitix_truncate(struct inode *inode)
 	__u16 *b;
 	struct pitix_inode_info *pii = pitix_i(inode);
 
-	int block = (__u32) inode->i_size / sb->s_blocksize + 1;
-	if ((__u32) inode->i_size % sb->s_blocksize == 0)
-		block--;
+	int block = ((__u32) inode->i_size + sb->s_blocksize -1)/ sb->s_blocksize ;
+	// if ((__u32) inode->i_size % sb->s_blocksize == 0)
+		// block--;
 
 	block_truncate_page(inode->i_mapping, inode->i_size, pitix_get_block);
 

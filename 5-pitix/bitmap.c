@@ -61,7 +61,7 @@ struct inode *pitix_new_inode(const struct inode *dir, umode_t mode, int *error)
 	}
 	pitix_test_and_set_bit(j, psb->imap);
 	psb->ffree--;
-	
+
 	spin_unlock(&bitmap_lock);
 
 	mark_buffer_dirty(psb->imap_bh);
@@ -104,20 +104,54 @@ int pitix_alloc_block(struct super_block *sb)
 	return 0;
 }
 
+int count_blocks(struct inode *inode) {
+	struct pitix_inode_info *pii = pitix_i(inode);
+	struct super_block *sb = inode->i_sb;
+	struct pitix_super_block *psb = pitix_sb(sb);
+	int i;
+
+	int ret = 0;
+	__u16 *b;
+
+	for (i = 0; i < INODE_DIRECT_DATA_BLOCKS && pii->direct_db[i]; ++i)
+		ret++;
+
+	if (pii->indirect_db) {
+		ret++;
+
+		struct buffer_head *bh = sb_bread(sb, psb->dzone_block + pii->indirect_db);
+		if (!bh)
+			printk(LOG_LEVEL "Unable to read block\n");
+
+		for (i = 0; i < sb->s_blocksize/2; ++i) {
+			b = (__u16 *)bh->b_data + i;
+
+			if (!*b)
+				break;
+			ret++;
+		}
+		brelse(bh);
+	}
+	return ret;
+}
+
 void pitix_free_block(struct super_block *sb, int block)
 {
 	struct pitix_super_block *psb = pitix_sb(sb);
 	unsigned long bit, zone;
 
-	if (block == 0 || (block > get_blocks(sb))) {
-		printk(LOG_LEVEL "Trying to free block not in datazone\n");
+	if (block <= 0 || (block > get_blocks(sb))) {
+		printk(LOG_LEVEL "Trying to free block %d not in datazone\n", block);
 		return;
 	}
 
 	spin_lock(&bitmap_lock);
-	if (!pitix_test_and_clear_bit(block, psb->dmap))
+	if (!pitix_test_and_clear_bit(block, psb->dmap)) {
 		printk(LOG_LEVEL "pitix_free_block (%s:%d): bit already cleared\n",
 		       sb->s_id, block);
+		spin_unlock(&bitmap_lock);
+		return;
+	}
 	psb->bfree++;	
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(psb->dmap_bh);

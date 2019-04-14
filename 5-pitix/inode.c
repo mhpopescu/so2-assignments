@@ -198,7 +198,7 @@ int pitix_getattr(const struct path *path, struct kstat *stat,
 
 	generic_fillattr(inode, stat);
 	
-	stat->blocks = get_blocks(sb);
+	stat->blocks = count_blocks(inode);
 
 	stat->blksize = sb->s_blocksize;
 	return 0;

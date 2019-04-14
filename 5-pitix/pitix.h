@@ -138,6 +138,7 @@ int pitix_add_link(struct dentry *dentry, struct inode *inode);
 struct pitix_dir_entry *pitix_find_entry(struct dentry *dentry, struct page **res_page);
 int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page);
 void pitix_set_inode(struct inode *inode, dev_t rdev);
+int count_blocks(struct inode *inode);
 
 /* Super operations */
 extern int pitix_fill_super(struct super_block *sb, void *data, int silent);
