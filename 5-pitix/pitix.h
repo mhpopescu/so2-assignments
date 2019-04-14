@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0
+
 #ifndef _PITIX_H
 #define _PITIX_H
 
@@ -17,7 +19,7 @@
  *	+-0		+-- 4096
  */
 
-/* 
+/*
  * PITIX super block on disk
  * Reused for in-memory super block
  */
@@ -54,7 +56,7 @@ struct pitix_inode {
 	__u16 indirect_data_block;
 };
 
-/* 
+/*
  * PITIX inode in memory
  */
 struct pitix_inode_info {
@@ -101,34 +103,35 @@ static inline long pitix_inodes_per_block(struct super_block *sb)
 }
 
 /* Bitmap operations */
+extern int pitix_alloc_inode(struct super_block *sb);
+extern void pitix_free_inode(struct super_block *sb, int ino);
 extern int pitix_alloc_block(struct super_block *sb);
 extern void pitix_free_block(struct super_block *sb, int block);
 extern int pitix_get_block(struct inode *inode, sector_t block,
 		struct buffer_head *bh_result, int create);
-extern struct address_space_operations pitix_aops;
-
-extern struct inode *pitix_alloc_inode(struct super_block *sb);
-extern void pitix_free_inode(struct super_block *sb, int ino);
+extern const struct address_space_operations pitix_aops;
 
 /* Dir operations */
-extern struct inode_operations pitix_dir_inode_operations;
-extern struct file_operations pitix_dir_operations;
-extern int pitix_readdir(struct file *filp, struct dir_context *ctx);
+extern const struct inode_operations pitix_dir_inode_operations;
+extern const struct file_operations pitix_dir_operations;
 ino_t pitix_inode_by_name(struct dentry *dentry, int delete);
+
+extern int pitix_readdir(struct file *filp, struct dir_context *ctx);
 
 int pitix_make_empty(struct inode *inode, struct inode *dir);
 int pitix_empty_dir(struct inode *inode);
 
 /* File operations */
-extern struct file_operations pitix_file_operations;
-extern struct inode_operations pitix_file_inode_operations;
+extern const struct file_operations pitix_file_operations;
+extern const struct inode_operations pitix_file_inode_operations;
 void pitix_truncate(struct inode *inode);
 
 int pitix_getattr(const struct path *path, struct kstat *stat,
 		  u32 request_mask, unsigned int flags);
 
 /* Inode operations */
-extern struct inode *pitix_new_inode(const struct inode *dir, umode_t mode, int *error);
+extern struct inode *pitix_new_inode(struct super_block *sb);
+// extern struct inode *pitix_new_inode(const struct inode *dir, umode_t mode, int *error);
 extern int pitix_write_inode(struct inode *inode, struct writeback_control *wbc);
 extern void pitix_evict_inode(struct inode *inode);
 
@@ -142,7 +145,7 @@ int count_blocks(struct inode *inode);
 
 /* Super operations */
 extern int pitix_fill_super(struct super_block *sb, void *data, int silent);
-extern struct super_operations pitix_sops;
+extern const struct super_operations pitix_sops;
 #endif
 
 static inline struct pitix_super_block *pitix_sb(struct super_block *sb)

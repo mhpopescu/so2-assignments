@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
+
 /*
- *  namei.c
+ * namei.c
  *
- *  INSPIRED FROM linux/fs/minix/namei.c
+ * INSPIRED FROM linux/fs/minix/namei.c
  *
+ * Author: Mihai Popescu mh.popescu12@gmail.com
  */
 
 #include <linux/buffer_head.h>
@@ -18,7 +20,45 @@
 
 #include "pitix.h"
 
-static struct dentry *pitix_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
+static struct inode *pitix_create_inode(const struct inode *dir, umode_t mode, int *error)
+{
+	struct super_block *sb = dir->i_sb;
+	struct pitix_super_block *psb = pitix_sb(sb);
+	struct inode *inode;
+	int ino;
+	int i;
+
+	ino = pitix_alloc_inode(sb);
+	if (!ino){
+		*error = -ENOSPC;
+		return NULL;
+	}
+
+	inode = new_inode(sb);
+	if (!inode) {
+		pitix_free_inode(sb, ino);
+		*error = -ENOMEM;
+		return NULL;
+	}
+
+	inode_init_owner(inode, dir, mode);
+	inode->i_ino = ino;
+	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
+	inode->i_blocks = 0;
+
+	for (i = 0; i < INODE_DIRECT_DATA_BLOCKS; ++i)
+		pitix_i(inode)->direct_db[i] = 0;
+	pitix_i(inode)->indirect_db = 0;
+
+	insert_inode_hash(inode);
+	mark_inode_dirty(inode);
+
+	*error = 0;
+	return inode;
+}
+
+static struct dentry *pitix_lookup(struct inode *dir,
+		struct dentry *dentry, unsigned int flags)
 {
 	struct inode *inode = NULL;
 	ino_t ino;
@@ -29,42 +69,26 @@ static struct dentry *pitix_lookup(struct inode *dir, struct dentry *dentry, uns
 	ino = pitix_inode_by_name(dentry, 0);
 	if (ino)
 		inode = pitix_iget(dir->i_sb, ino);
-	return d_splice_alias(inode, dentry);
-}
 
-void pitix_set_inode(struct inode *inode, dev_t rdev)
-{
-	if (S_ISREG(inode->i_mode)) {
-		inode->i_op = &pitix_file_inode_operations;
-		inode->i_fop = &pitix_file_operations;
-		inode->i_mapping->a_ops = &pitix_aops;
-	} else if (S_ISDIR(inode->i_mode)) {
-		inode->i_op = &pitix_dir_inode_operations;
-		inode->i_fop = &pitix_dir_operations;
-		inode->i_mapping->a_ops = &pitix_aops;
-	} 
-	/*else if (S_ISLNK(inode->i_mode)) {
-		inode->i_op = &minix_symlink_inode_operations;
-		inode_nohighmem(inode);
-		inode->i_mapping->a_ops = &minix_aops;
-	} else
-		init_special_inode(inode, inode->i_mode, rdev);
-	*/
+	return d_splice_alias(inode, dentry);
 }
 
 static int add_nondir(struct dentry *dentry, struct inode *inode)
 {
 	int err = pitix_add_link(dentry, inode);
+
 	if (!err) {
 		d_instantiate(dentry, inode);
 		return 0;
 	}
 	inode_dec_link_count(inode);
 	iput(inode);
+
 	return err;
 }
 
-static int pitix_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t rdev)
+static int pitix_mknod(struct inode *dir,
+		struct dentry *dentry, umode_t mode, dev_t rdev)
 {
 	int error;
 	struct inode *inode;
@@ -72,7 +96,7 @@ static int pitix_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, d
 	if (!old_valid_dev(rdev))
 		return -EINVAL;
 
-	inode = pitix_new_inode(dir, mode, &error);
+	inode = pitix_create_inode(dir, mode, &error);
 
 	if (inode) {
 		inode_init_owner(inode, dir, mode);
@@ -80,23 +104,25 @@ static int pitix_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, d
 		mark_inode_dirty(inode);
 		error = add_nondir(dentry, inode);
 	}
+
 	return error;
 }
 
 static int pitix_create(struct inode *dir, struct dentry *dentry, umode_t mode,
-		bool excl)
+						bool excl)
 {
 	return pitix_mknod(dir, dentry, mode, 0);
 }
 
-static int pitix_link(struct dentry *old_dentry, struct inode * dir,
-	struct dentry *dentry)
+static int pitix_link(struct dentry *old_dentry, struct inode *dir,
+						struct dentry *dentry)
 {
 	struct inode *inode = d_inode(old_dentry);
 
 	inode->i_ctime = current_time(inode);
 	inode_inc_link_count(inode);
 	ihold(inode);
+
 	return add_nondir(dentry, inode);
 }
 
@@ -107,12 +133,11 @@ static int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 
 	inode_inc_link_count(dir);
 
-	inode = pitix_new_inode(dir, S_IFDIR | mode, &err);
+	inode = pitix_create_inode(dir, S_IFDIR | mode, &err);
 	if (!inode)
 		goto out_dir;
 
 	pitix_set_inode(inode, 0);
-
 	inode_inc_link_count(inode);
 
 	err = pitix_make_empty(inode, dir);
@@ -124,6 +149,7 @@ static int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 		goto out_fail;
 
 	d_instantiate(dentry, inode);
+
 out:
 	return err;
 
@@ -143,6 +169,7 @@ static int pitix_unlink(struct inode *dir, struct dentry *dentry)
 	struct inode *inode = d_inode(dentry);
 	struct page *page;
 	struct pitix_dir_entry *de;
+
 	de = pitix_find_entry(dentry, &page);
 	if (!de)
 		goto end_unlink;
@@ -150,8 +177,10 @@ static int pitix_unlink(struct inode *dir, struct dentry *dentry)
 	err = pitix_delete_entry(de, page);
 	if (err)
 		goto end_unlink;
+
 	inode->i_ctime = dir->i_ctime;
 	inode_dec_link_count(inode);
+
 end_unlink:
 	return err;
 }
@@ -168,10 +197,11 @@ static int pitix_rmdir(struct inode *dir, struct dentry *dentry)
 			inode_dec_link_count(inode);
 		}
 	}
+
 	return err;
 }
 
-struct inode_operations pitix_dir_inode_operations = {
+const struct inode_operations pitix_dir_inode_operations = {
 	.lookup		= pitix_lookup,
 	.create		= pitix_create,
 	.link		= pitix_link,

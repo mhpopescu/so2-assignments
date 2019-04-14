@@ -3,6 +3,10 @@
 /*
  * PITIX file system
  *
+ * inode.c
+ *
+ * INSPIRED FROM linux/fs/minix/inode.c
+ *
  * Author: Mihai Popescu mh.popescu12@gmail.com
  */
 
@@ -44,7 +48,7 @@ static void pitix_write_failed(struct address_space *mapping, loff_t to)
 }
 
 static int pitix_write_begin(struct file *file, struct address_space *mapping,
-			loff_t pos, unsigned len, unsigned flags,
+			loff_t pos, unsigned int len, unsigned int flags,
 			struct page **pagep, void **fsdata)
 {
 	int ret;
@@ -87,11 +91,11 @@ void pitix_evict_inode(struct inode *inode)
 
 }
 
-struct inode *pitix_alloc_inode(struct super_block *s)
+struct inode *pitix_new_inode(struct super_block *s)
 {
 	struct pitix_inode_info *pii;
 
-	pii = kzalloc(sizeof (struct pitix_inode_info), GFP_KERNEL);
+	pii = kzalloc(sizeof(struct pitix_inode_info), GFP_KERNEL);
 	if (!pii)
 		return NULL;
 	inode_init_once(&pii->vfs_inode);
@@ -107,11 +111,11 @@ static int pitix_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 	buf->f_type = sb->s_magic;
 	buf->f_bsize = sb->s_blocksize;
-	buf->f_blocks = get_blocks(sb); /* Total data blocks in filesystem */
-	buf->f_bfree = psb->bfree;		/* Free blocks in filesystem */
-	buf->f_bavail = buf->f_bfree;	/* Free blocks available to unprivileged user */
-	buf->f_files = get_inodes(sb);	/* Total file nodes in filesystem */
-	buf->f_ffree = psb->ffree;		/* Free file nodes in filesystem */
+	buf->f_blocks = get_blocks(sb);
+	buf->f_bfree = psb->bfree;
+	buf->f_bavail = buf->f_bfree;
+	buf->f_files = get_inodes(sb);
+	buf->f_ffree = psb->ffree;
 	buf->f_namelen = PITIX_NAME_LEN;
 	buf->f_fsid.val[0] = (u32)id;
 	buf->f_fsid.val[1] = (u32)(id >> 32);
@@ -119,7 +123,21 @@ static int pitix_statfs(struct dentry *dentry, struct kstatfs *buf)
 	return 0;
 }
 
-struct pitix_inode *pitix_raw_inode(struct super_block *sb, ino_t ino, struct buffer_head **bh)
+void pitix_set_inode(struct inode *inode, dev_t rdev)
+{
+	if (S_ISREG(inode->i_mode)) {
+		inode->i_op = &pitix_file_inode_operations;
+		inode->i_fop = &pitix_file_operations;
+		inode->i_mapping->a_ops = &pitix_aops;
+	} else if (S_ISDIR(inode->i_mode)) {
+		inode->i_op = &pitix_dir_inode_operations;
+		inode->i_fop = &pitix_dir_operations;
+		inode->i_mapping->a_ops = &pitix_aops;
+	}
+}
+
+static struct pitix_inode *pitix_raw_inode(struct super_block *sb,
+		ino_t ino, struct buffer_head **bh)
 {
 	int block;
 	struct pitix_inode *pi;
@@ -132,10 +150,10 @@ struct pitix_inode *pitix_raw_inode(struct super_block *sb, ino_t ino, struct bu
 	}
 
 	block = pitix_sb(sb)->izone_block + ino / pitix_inodes_per_block(sb);
-	
+
 	*bh = sb_bread(sb, block);
 	if (!*bh) {
-		printk("Unable to read inode block\n");
+		printk(LOG_LEVEL "Unable to read block %d\n", block);
 		return NULL;
 	}
 
@@ -176,8 +194,11 @@ int pitix_write_inode(struct inode *inode, struct writeback_control *wbc)
 	struct buffer_head *bh;
 
 	bh = pitix_update_inode(inode);
-	if (!bh)
+	if (!bh) {
+		printk(LOG_LEVEL "Unable to update inode\n");
 		return -EIO;
+	}
+
 	if (wbc->sync_mode == WB_SYNC_ALL && buffer_dirty(bh)) {
 		sync_dirty_buffer(bh);
 		if (buffer_req(bh) && !buffer_uptodate(bh)) {
@@ -197,10 +218,10 @@ int pitix_getattr(const struct path *path, struct kstat *stat,
 	struct inode *inode = d_inode(path->dentry);
 
 	generic_fillattr(inode, stat);
-	
-	stat->blocks = count_blocks(inode);
 
+	stat->blocks = count_blocks(inode);
 	stat->blksize = sb->s_blocksize;
+
 	return 0;
 }
 
@@ -273,28 +294,15 @@ struct inode *pitix_iget(struct super_block *sb, unsigned long inumber)
 	return inode;
 }
 
-static int pitix_remount(struct super_block *sb, int *flags, char *data)
-{
-	sync_filesystem(sb);
-	return 0;
-}
-
 static void pitix_put_super(struct super_block *sb)
 {
 	struct pitix_super_block *psb = pitix_sb(sb);
 
-	/* Free superblock buffer head. */
 	mark_buffer_dirty(psb->sb_bh);
 	brelse(psb->sb_bh);
 	brelse(psb->imap_bh);
 	brelse(psb->dmap_bh);
 	sb->s_fs_info = NULL;
-
-pr_info("bits %d blockSZ %ld imap %d dmap %d izone %d dzone %d bfree %d ffree %d PAGE_SIZE %ld\n", 
-		psb->block_size_bits, sb->s_blocksize, psb->imap_block, psb->dmap_block, 
-		psb->izone_block, psb->dzone_block, psb->bfree, psb->ffree, PAGE_SIZE);
-
-	printk(KERN_DEBUG "released superblock resources\n");
 }
 
 int pitix_fill_super(struct super_block *sb, void *data, int silent)
@@ -304,49 +312,54 @@ int pitix_fill_super(struct super_block *sb, void *data, int silent)
 	struct dentry *root_dentry;
 	struct buffer_head *bh;
 	int ret = -EINVAL;
+
 	bh = sb_bread(sb, PITIX_SUPER_BLOCK);
 	if (bh == NULL)
-		goto out_bad_sb;
+		goto out_bad_bh;
 
 	psb = (struct pitix_super_block *) bh->b_data;
 
-	if (psb->magic != PITIX_MAGIC)
-		goto out_bad_magic;
+	if (psb->magic != PITIX_MAGIC) {
+		printk(LOG_LEVEL "bad magic number\n");
+		goto out_free_bh;
+	}
 
+	if (!sb_set_blocksize(sb, (1 << psb->block_size_bits))) {
+		printk(LOG_LEVEL "bad block size\n");
+		goto out_free_bh;
+	}
 
-	if (!sb_set_blocksize(sb, (1 << psb->block_size_bits)))
-		goto out_bad_blocksize;
+	/* Read again to have rights to modify sb on disk
+	 * bfree and ffree are modified
+	 */
 	brelse(bh);
-
 	bh = sb_bread(sb, PITIX_SUPER_BLOCK);
 	if (bh == NULL)
-		goto out_bad_sb;
+		goto out_bad_bh;
 
 	psb = (struct pitix_super_block *) bh->b_data;
-	psb->sb_bh = bh; 
+	psb->sb_bh = bh;
 	sb->s_fs_info = psb;
 
-
-pr_info("bits %d blockSZ %ld imap %d dmap %d izone %d dzone %d bfree %d ffree %d PAGE_SIZE %ld\n", 
-		psb->block_size_bits, sb->s_blocksize, psb->imap_block, psb->dmap_block, 
-		psb->izone_block, psb->dzone_block, psb->bfree, psb->ffree, PAGE_SIZE);
 	sb->s_magic = psb->magic;
 	sb->s_op = &pitix_sops;
 
 	psb->imap_bh = sb_bread(sb, psb->imap_block);
 
 	if (psb->imap_bh == NULL)
-		goto out_bad_sb;
+		goto out_free_bh;
 	psb->imap = (__u8 *)psb->imap_bh->b_data;
 
 	psb->dmap_bh = sb_bread(sb, psb->dmap_block);
 	if (psb->dmap_bh == NULL)
-		goto out_bad_sb;
+		goto out_bad_dmap;
 	psb->dmap = (__u8 *)psb->dmap_bh->b_data;
-	
+
 	root_inode = pitix_iget(sb, PITIX_ROOT_INODE);
-	if (!root_inode)
+	if (!root_inode) {
+		printk(LOG_LEVEL "bad inode\n");
 		goto out_bad_inode;
+	}
 
 	root_dentry = d_make_root(root_inode);
 	if (!root_dentry)
@@ -358,14 +371,14 @@ pr_info("bits %d blockSZ %ld imap %d dmap %d izone %d dzone %d bfree %d ffree %d
 out_iput:
 	iput(root_inode);
 out_bad_inode:
-	printk(LOG_LEVEL "bad inode\n");
-out_bad_magic:
-	printk(LOG_LEVEL "bad magic number\n");
+	brelse(psb->dmap_bh);
+out_bad_dmap:
+	brelse(psb->imap_bh);
+out_free_bh:
 	brelse(bh);
-out_bad_blocksize:
-	printk(LOG_LEVEL "bad block size\n");
 	sb->s_fs_info = NULL;
-out_bad_sb:
+	return ret;
+out_bad_bh:
 	printk(LOG_LEVEL "error reading buffer_head\n");
 	return ret;
 }
@@ -384,17 +397,15 @@ static struct file_system_type pitix_fs_type = {
 	.fs_flags	= FS_REQUIRES_DEV,
 };
 
-/* dir and inode operation structures */
-
-struct address_space_operations pitix_aops = {
-	.readpage       = pitix_readpage,
-	.writepage 		= pitix_writepage,
-	.write_begin 	= pitix_write_begin,
-	.write_end  	= generic_write_end,
+const struct address_space_operations pitix_aops = {
+	.readpage		= pitix_readpage,
+	.writepage		= pitix_writepage,
+	.write_begin	= pitix_write_begin,
+	.write_end		= generic_write_end,
 	.bmap 			= pitix_bmap,
 };
 
-struct file_operations pitix_file_operations = {
+const struct file_operations pitix_file_operations = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= generic_file_read_iter,
 	.write_iter	= generic_file_write_iter,
@@ -403,19 +414,18 @@ struct file_operations pitix_file_operations = {
 	.splice_read	= generic_file_splice_read,
 };
 
-struct inode_operations pitix_file_inode_operations = {
+const struct inode_operations pitix_file_inode_operations = {
 	.getattr	= pitix_getattr,
 	.setattr	= pitix_setattr,
 };
 
-struct super_operations pitix_sops = {
-	.alloc_inode	= pitix_alloc_inode,
+const struct super_operations pitix_sops = {
+	.alloc_inode	= pitix_new_inode,
 	.destroy_inode	= pitix_destroy_inode,
 	.write_inode	= pitix_write_inode,
 	.evict_inode	= pitix_evict_inode,
 	.statfs			= pitix_statfs,
 	.put_super		= pitix_put_super,
-	.remount_fs		= pitix_remount,
 };
 
 static int __init pitix_init(void)
