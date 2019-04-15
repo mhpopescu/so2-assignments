@@ -3,7 +3,7 @@
 /*
  * PITIX file system
  *
- * inode.c
+ * inode.c - inode, address space and super block operations
  *
  * INSPIRED FROM linux/fs/minix/inode.c
  *
@@ -32,6 +32,8 @@ MODULE_LICENSE("GPL");
 #define PITIX_SUPER_BLOCK	0
 #define PITIX_ROOT_INODE	0
 
+/*---------address_space_operations functions---------*/
+
 static int pitix_writepage(struct page *page, struct writeback_control *wbc)
 {
 	return block_write_full_page(page, pitix_get_block, wbc);
@@ -51,7 +53,7 @@ static int pitix_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned int len, unsigned int flags,
 			struct page **pagep, void **fsdata)
 {
-	int ret;
+	int ret = 0;
 
 	ret = block_write_begin(mapping, pos, len, flags, pagep,
 				pitix_get_block);
@@ -70,6 +72,88 @@ static int pitix_readpage(struct file *file, struct page *page)
 {
 	return block_read_full_page(page, pitix_get_block);
 }
+
+/*-------------------inode helpers--------------------*/
+
+/*
+ * set operations for files/directories
+ */
+void pitix_set_inode(struct inode *inode, dev_t rdev)
+{
+	if (S_ISREG(inode->i_mode)) {
+		inode->i_op		= &pitix_file_inode_operations;
+		inode->i_fop	= &pitix_file_operations;
+		inode->i_mapping->a_ops = &pitix_aops;
+	} else if (S_ISDIR(inode->i_mode)) {
+		inode->i_op		= &pitix_dir_inode_operations;
+		inode->i_fop	= &pitix_dir_operations;
+		inode->i_mapping->a_ops = &pitix_aops;
+	}
+}
+
+/*
+ * Return raw inode from disk
+ */
+static struct pitix_inode *pitix_raw_inode(struct super_block *sb,
+		ino_t ino, struct buffer_head **bh)
+{
+	int block = 0;
+	struct pitix_inode *pi = NULL;
+
+	*bh = NULL;
+	if (ino > get_inodes(sb)) {
+		printk(LOG_LEVEL "Bad inode number on dev %s: %ld is out of range\n",
+		       sb->s_id, (long)ino);
+		goto out_raw_inode;
+	}
+
+	block = pitix_sb(sb)->izone_block + ino / pitix_inodes_per_block(sb);
+	*bh = sb_bread(sb, block);
+	if (!*bh) {
+		printk(LOG_LEVEL "Unable to read block %d\n", block);
+		goto out_raw_inode;
+	}
+
+	pi = ((struct pitix_inode *) (*bh)->b_data);
+	return pi + ino % pitix_inodes_per_block(sb);
+
+out_raw_inode:
+	return NULL;
+}
+
+/*
+ * Update raw inode with the new stats
+ */
+static struct buffer_head *pitix_update_inode(struct inode *inode)
+{
+	struct buffer_head *bh = NULL;
+	struct pitix_inode *raw_inode = NULL;
+	int i = 0;
+
+	struct pitix_inode_info *pi = pitix_i(inode);
+
+	raw_inode = pitix_raw_inode(inode->i_sb, inode->i_ino, &bh);
+	if (!raw_inode)
+		goto out_update_inode;
+
+	raw_inode->mode = inode->i_mode;
+	raw_inode->uid = fs_high2lowuid(i_uid_read(inode));
+	raw_inode->gid = fs_high2lowgid(i_gid_read(inode));
+	raw_inode->size = inode->i_size;
+	raw_inode->time = inode->i_mtime.tv_sec;
+
+	for (i = 0; i < INODE_DIRECT_DATA_BLOCKS; i++)
+		raw_inode->direct_data_blocks[i] = pi->direct_db[i];
+	raw_inode->indirect_data_block = pi->indirect_db;
+
+	mark_buffer_dirty(bh);
+	return bh;
+
+out_update_inode:
+	return NULL;
+}
+
+/*------------super_operations functions--------------*/
 
 static void pitix_destroy_inode(struct inode *inode)
 {
@@ -93,7 +177,7 @@ void pitix_evict_inode(struct inode *inode)
 
 struct inode *pitix_new_inode(struct super_block *s)
 {
-	struct pitix_inode_info *pii;
+	struct pitix_inode_info *pii = NULL;
 
 	pii = kzalloc(sizeof(struct pitix_inode_info), GFP_KERNEL);
 	if (!pii)
@@ -109,80 +193,18 @@ static int pitix_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct pitix_super_block *psb = pitix_sb(sb);
 	u64 id = huge_encode_dev(sb->s_bdev->bd_dev);
 
-	buf->f_type = sb->s_magic;
-	buf->f_bsize = sb->s_blocksize;
-	buf->f_blocks = get_blocks(sb);
-	buf->f_bfree = psb->bfree;
-	buf->f_bavail = buf->f_bfree;
-	buf->f_files = get_inodes(sb);
-	buf->f_ffree = psb->ffree;
-	buf->f_namelen = PITIX_NAME_LEN;
-	buf->f_fsid.val[0] = (u32)id;
-	buf->f_fsid.val[1] = (u32)(id >> 32);
+	buf->f_type			= sb->s_magic;
+	buf->f_bsize		= sb->s_blocksize;
+	buf->f_blocks		= get_blocks(sb);
+	buf->f_bfree		= psb->bfree;
+	buf->f_bavail		= buf->f_bfree;
+	buf->f_files		= get_inodes(sb);
+	buf->f_ffree		= psb->ffree;
+	buf->f_namelen		= PITIX_NAME_LEN;
+	buf->f_fsid.val[0]	= (u32)id;
+	buf->f_fsid.val[1]	= (u32)(id >> 32);
 
 	return 0;
-}
-
-void pitix_set_inode(struct inode *inode, dev_t rdev)
-{
-	if (S_ISREG(inode->i_mode)) {
-		inode->i_op = &pitix_file_inode_operations;
-		inode->i_fop = &pitix_file_operations;
-		inode->i_mapping->a_ops = &pitix_aops;
-	} else if (S_ISDIR(inode->i_mode)) {
-		inode->i_op = &pitix_dir_inode_operations;
-		inode->i_fop = &pitix_dir_operations;
-		inode->i_mapping->a_ops = &pitix_aops;
-	}
-}
-
-static struct pitix_inode *pitix_raw_inode(struct super_block *sb,
-		ino_t ino, struct buffer_head **bh)
-{
-	int block;
-	struct pitix_inode *pi;
-
-	*bh = NULL;
-	if (ino > get_inodes(sb)) {
-		printk(LOG_LEVEL "Bad inode number on dev %s: %ld is out of range\n",
-		       sb->s_id, (long)ino);
-		return NULL;
-	}
-
-	block = pitix_sb(sb)->izone_block + ino / pitix_inodes_per_block(sb);
-
-	*bh = sb_bread(sb, block);
-	if (!*bh) {
-		printk(LOG_LEVEL "Unable to read block %d\n", block);
-		return NULL;
-	}
-
-	pi = ((struct pitix_inode *) (*bh)->b_data);
-	return pi + ino % pitix_inodes_per_block(sb);
-}
-
-static struct buffer_head *pitix_update_inode(struct inode *inode)
-{
-	struct buffer_head *bh;
-	struct pitix_inode *raw_inode;
-	struct pitix_inode_info *pi = pitix_i(inode);
-	int i;
-
-	raw_inode = pitix_raw_inode(inode->i_sb, inode->i_ino, &bh);
-	if (!raw_inode)
-		return NULL;
-	raw_inode->mode = inode->i_mode;
-	raw_inode->uid = fs_high2lowuid(i_uid_read(inode));
-	raw_inode->gid = fs_high2lowgid(i_gid_read(inode));
-	raw_inode->size = inode->i_size;
-	raw_inode->time = inode->i_mtime.tv_sec;
-
-	for (i = 0; i < INODE_DIRECT_DATA_BLOCKS; i++)
-		raw_inode->direct_data_blocks[i] = pi->direct_db[i];
-	raw_inode->indirect_data_block = pi->indirect_db;
-
-	mark_buffer_dirty(bh);
-	return bh;
 }
 
 /*
@@ -196,7 +218,8 @@ int pitix_write_inode(struct inode *inode, struct writeback_control *wbc)
 	bh = pitix_update_inode(inode);
 	if (!bh) {
 		printk(LOG_LEVEL "Unable to update inode\n");
-		return -EIO;
+		err = -EIO;
+		goto out_write_inode;
 	}
 
 	if (wbc->sync_mode == WB_SYNC_ALL && buffer_dirty(bh)) {
@@ -208,9 +231,14 @@ int pitix_write_inode(struct inode *inode, struct writeback_control *wbc)
 		}
 	}
 	brelse(bh);
+
+out_write_inode:
 	return err;
 }
 
+/*
+ * Fill inode stats
+ */
 int pitix_getattr(const struct path *path, struct kstat *stat,
 		  u32 request_mask, unsigned int flags)
 {
@@ -225,20 +253,23 @@ int pitix_getattr(const struct path *path, struct kstat *stat,
 	return 0;
 }
 
+/*
+ * Set inode stats
+ */
 static int pitix_setattr(struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = d_inode(dentry);
-	int error;
+	int error = 0;
 
 	error = setattr_prepare(dentry, attr);
 	if (error)
-		return error;
+		goto out_set_attr;
 
 	if ((attr->ia_valid & ATTR_SIZE) &&
-	    attr->ia_size != i_size_read(inode)) {
+			attr->ia_size != i_size_read(inode)) {
 		error = inode_newsize_ok(inode, attr->ia_size);
 		if (error)
-			return error;
+			goto out_set_attr;
 
 		truncate_setsize(inode, attr->ia_size);
 		pitix_truncate(inode);
@@ -246,29 +277,49 @@ static int pitix_setattr(struct dentry *dentry, struct iattr *attr)
 
 	setattr_copy(inode, attr);
 	mark_inode_dirty(inode);
-	return 0;
+
+out_set_attr:
+	return error;
 }
 
+static void pitix_put_super(struct super_block *sb)
+{
+	struct pitix_super_block *psb = pitix_sb(sb);
+
+	mark_buffer_dirty(psb->sb_bh);
+	brelse(psb->sb_bh);
+	brelse(psb->imap_bh);
+	brelse(psb->dmap_bh);
+	sb->s_fs_info = NULL;
+}
+
+/*--------End of super_operations functions--------*/
+
+/*
+ * Return VFS inode with corresponding to the inumber inode from disk
+ */
 struct inode *pitix_iget(struct super_block *sb, unsigned long inumber)
 {
-	struct pitix_inode_info *pii;
-	struct pitix_inode *raw_inode;
-	struct buffer_head *bh;
-	struct inode *inode;
-	int i;
+	int i = 0;
+	struct pitix_inode_info *pii = NULL;
+	struct pitix_inode *raw_inode = NULL;
+	struct buffer_head *bh = NULL;
+	struct inode *inode = NULL;
+	void *err;
+
 	struct pitix_super_block *psb = pitix_sb(sb);
 
 	/* Allocate VFS inode. */
 	inode = iget_locked(sb, inumber);
 	if (inode == NULL) {
 		printk(LOG_LEVEL "error aquiring inode\n");
-		return ERR_PTR(-ENOMEM);
+		err = ERR_PTR(-ENOMEM);
 	}
 
 	raw_inode = pitix_raw_inode(sb, inode->i_ino, &bh);
 	if (!raw_inode) {
 		iget_failed(inode);
-		return ERR_PTR(-EIO);
+		err = ERR_PTR(-EIO);
 	}
 
 	/* Fill VFS inode */
@@ -292,25 +343,20 @@ struct inode *pitix_iget(struct super_block *sb, unsigned long inumber)
 	unlock_new_inode(inode);
 
 	return inode;
+
+out_iget:
+	return err;
 }
 
-static void pitix_put_super(struct super_block *sb)
-{
-	struct pitix_super_block *psb = pitix_sb(sb);
-
-	mark_buffer_dirty(psb->sb_bh);
-	brelse(psb->sb_bh);
-	brelse(psb->imap_bh);
-	brelse(psb->dmap_bh);
-	sb->s_fs_info = NULL;
-}
-
+/*
+ * Initialize in memory super block
+ */
 int pitix_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct pitix_super_block *psb;
-	struct inode *root_inode;
-	struct dentry *root_dentry;
-	struct buffer_head *bh;
+	struct pitix_super_block *psb = NULL;
+	struct inode *root_inode = NULL;
+	struct dentry *root_dentry = NULL;
+	struct buffer_head *bh = NULL;
 	int ret = -EINVAL;
 
 	bh = sb_bread(sb, PITIX_SUPER_BLOCK);
@@ -340,12 +386,10 @@ int pitix_fill_super(struct super_block *sb, void *data, int silent)
 	psb = (struct pitix_super_block *) bh->b_data;
 	psb->sb_bh = bh;
 	sb->s_fs_info = psb;
-
 	sb->s_magic = psb->magic;
 	sb->s_op = &pitix_sops;
 
 	psb->imap_bh = sb_bread(sb, psb->imap_block);
-
 	if (psb->imap_bh == NULL)
 		goto out_free_bh;
 	psb->imap = (__u8 *)psb->imap_bh->b_data;
@@ -374,6 +418,7 @@ out_bad_inode:
 	brelse(psb->dmap_bh);
 out_bad_dmap:
 	brelse(psb->imap_bh);
+	printk(LOG_LEVEL "error reading buffer_head\n");
 out_free_bh:
 	brelse(bh);
 	sb->s_fs_info = NULL;
@@ -383,6 +428,9 @@ out_bad_bh:
 	return ret;
 }
 
+/*
+ * file_system_type mount function
+ */
 static struct dentry *pitix_mount(struct file_system_type *fs_type,
 		int flags, const char *dev_name, void *data)
 {
@@ -397,26 +445,26 @@ static struct file_system_type pitix_fs_type = {
 	.fs_flags	= FS_REQUIRES_DEV,
 };
 
+const struct inode_operations pitix_file_inode_operations = {
+	.getattr	= pitix_getattr,
+	.setattr	= pitix_setattr,
+};
+
 const struct address_space_operations pitix_aops = {
 	.readpage		= pitix_readpage,
 	.writepage		= pitix_writepage,
 	.write_begin	= pitix_write_begin,
 	.write_end		= generic_write_end,
-	.bmap 			= pitix_bmap,
+	.bmap			= pitix_bmap,
 };
 
 const struct file_operations pitix_file_operations = {
-	.llseek		= generic_file_llseek,
-	.read_iter	= generic_file_read_iter,
-	.write_iter	= generic_file_write_iter,
-	.mmap		= generic_file_mmap,
-	.fsync		= generic_file_fsync,
+	.llseek			= generic_file_llseek,
+	.read_iter		= generic_file_read_iter,
+	.write_iter		= generic_file_write_iter,
+	.mmap			= generic_file_mmap,
+	.fsync			= generic_file_fsync,
 	.splice_read	= generic_file_splice_read,
-};
-
-const struct inode_operations pitix_file_inode_operations = {
-	.getattr	= pitix_getattr,
-	.setattr	= pitix_setattr,
 };
 
 const struct super_operations pitix_sops = {

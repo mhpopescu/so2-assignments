@@ -116,36 +116,35 @@ extern const struct inode_operations pitix_dir_inode_operations;
 extern const struct file_operations pitix_dir_operations;
 ino_t pitix_inode_by_name(struct dentry *dentry, int delete);
 
-extern int pitix_readdir(struct file *filp, struct dir_context *ctx);
-
-int pitix_make_empty(struct inode *inode, struct inode *dir);
-int pitix_empty_dir(struct inode *inode);
-
 /* File operations */
 extern const struct file_operations pitix_file_operations;
 extern const struct inode_operations pitix_file_inode_operations;
+extern int pitix_getattr(const struct path *path, struct kstat *stat,
+		u32 request_mask, unsigned int flags);
 void pitix_truncate(struct inode *inode);
-
-int pitix_getattr(const struct path *path, struct kstat *stat,
-		  u32 request_mask, unsigned int flags);
 
 /* Inode operations */
 extern struct inode *pitix_new_inode(struct super_block *sb);
-// extern struct inode *pitix_new_inode(const struct inode *dir, umode_t mode, int *error);
-extern int pitix_write_inode(struct inode *inode, struct writeback_control *wbc);
+extern int pitix_write_inode(struct inode *inode,
+		struct writeback_control *wbc);
 extern void pitix_evict_inode(struct inode *inode);
 
 extern struct inode *pitix_iget(struct super_block *sb, unsigned long ino);
 
-int pitix_add_link(struct dentry *dentry, struct inode *inode);
-struct pitix_dir_entry *pitix_find_entry(struct dentry *dentry, struct page **res_page);
-int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page);
-void pitix_set_inode(struct inode *inode, dev_t rdev);
-int count_blocks(struct inode *inode);
-
 /* Super operations */
 extern int pitix_fill_super(struct super_block *sb, void *data, int silent);
 extern const struct super_operations pitix_sops;
+
+/* Other functions */
+int pitix_make_empty(struct inode *inode, struct inode *dir);
+int pitix_empty_dir(struct inode *inode);
+int pitix_add_link(struct dentry *dentry, struct inode *inode);
+int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page);
+int count_blocks(struct inode *inode);
+void pitix_set_inode(struct inode *inode, dev_t rdev);
+struct pitix_dir_entry *pitix_find_entry(struct dentry *dentry,
+		struct page **res_page);
+
 #endif
 
 static inline struct pitix_super_block *pitix_sb(struct super_block *sb)

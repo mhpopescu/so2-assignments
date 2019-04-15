@@ -1,68 +1,19 @@
-mount -t pitix /tmp/pitix.loop /tmp/pitix.mnt/ -o loop
-
-Rationamentul de la minix pentru superblock
-pag 538 Operating Systems Design and Implementation, Third Edition
-By Andrew S. Tanenbaum
-The information in the superblock is redundant because sometimes it is needed in one form and
-sometimes in another. With 1 KB devoted to the superblock, it makes sense to compute this
-information in all the forms it is needed, rather than having to recompute it frequently during
-execution. The zone number of the first data zone on the disk, for example, can be calculated
-from the block size, zone size, number of i-nodes, and number of zones, but it is faster just to
-keep it in the superblock. The rest of the superblock is wasted anyhow, so using up another word
-of it costs nothing.
-
-In felul acesta lucram doar cu structura sbi
+Am facut tot posibilul sa pastrez declaratiile functiilor din pitix.h asa cum au fost ele declarate. Am vazut pe lista de discutii ca se pot modifica fisierele header[1]. Asa ca am modificat macro-ul pitix_i pentru a returna structura pitix_inode_info definita tot in pitix.h. Am facut acest lucru deoarece trebuie sa retin in memorie informatii despre inode, cum ar fi blocurile de date. Am considerat ca nu isi are rostul sa ocup memorie cu o structura de tipul pitix_inode pentru asta. Pentru superblock in memorie refolosesc structura pitix_super_block si folosesc macro-urile din pitix.h pentru informatii.
 
 
-DAR
-static inline struct pitix_super_block *pitix_sb(struct super_block *sb)
-{
-	return sb->s_fs_info;
-}
+In rezolvarea temei am urmarit codul sistemului de fisiere minix
 
-DECI se vrea folosirea structurii pitix_super_block fara sa mai avem pitix_sb_info. Respectam structura data
+inode.c
+Este initializat superblockul
+Sunt definite operatiile cu inod-uri si blocuri
 
+dir.c
+Sunt definite operatiile pentru directoare
 
-DUPA am vazut ca se pot modifica fisierele header
-http://cursuri.cs.pub.ro/pipermail/so2/2018-April/007622.html
+namei.c
+Sunt definite operatiile cu inod-urile pentru directoare si fisiere
 
+itree.c
+Maparea blocurilor de date
 
-
-
-
-pentru directoare: lookup, unlink, mkdir, rmdir, iterate
-pentru fișiere: create, truncate, funcția de bitmap
-
-pitix_new_inode nu e ok sa setez dupa ce il fac dirty
-	// FIXME 	MOVE HERE because of make inode_dirty
-	// inode_init_owner(inode, dir, mode);
-+ ca nu pot verifica erorile *error = -ENOSPC;
-
-In loc sa tin in private info am urmat exemplul din pitix
-static inline struct pitix_inode_info *pitix_i(struct inode *inode)
-{
-	return container_of(inode, struct pitix_inode_info, vfs_inode);
-}
-
-desi poate era o idee am considerat ca pentru un simplu nivel de indirectare nu e nevoie sa ma complic cu arborele din minix. nu construiesc adancimea
-
-
-
-http://cursuri.cs.pub.ro/pipermail/so2/2016-April/007178.html
-Noua dimensiune este în câmpul i_size din inode. Dacă împarți acea
-dimensiune la sb->s_blocksize și adaugi 1 (pentru rest) obții câte
-blocuri va avea acum fișierul. Ce este peste se șterge.
-
->> Mai exact, setattr imi este apelat (fie daca scriu intr-un fisier, fie la
->> cp din teste) si eu apelez pitix_truncate (care aloca sau dealoca blocuri
->> in fc de i_size). Doar ca spre deosebire de truncate (din fs unde spunea ca
->> i_size va avea noua dimensiune), setattr nu imi seteaza i_size (il lasa cum
->> era).
->>
->> Cum accesez noua dimensiune dorita a fisierului pt a ii face truncate
->> corect? [cred ca de aici este problema cu bfree]
-
-Acum am ajuns aici :-) Văd că folosești corect i_size.
-
-Funcția pitix_setattr, ar trebui să fie identică cu cea din minix[1], nu
-ar trebui să ai probleme legat de aia.
+[1] http://cursuri.cs.pub.ro/pipermail/so2/2018-April/007622.html

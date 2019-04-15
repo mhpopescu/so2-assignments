@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /*
- * bitmap.c contains the code that handles the inode and block bitmaps
+ * bitmap.c - contains the code that handles the inode and block bitmaps
  *
  * INSPIRED FROM linux/fs/pitix/bitmap.c
  *
@@ -19,6 +19,7 @@
 
 #include "pitix.h"
 
+/* Pitix does not have unsigned long addr size so cast them */
 #define pitix_set_bit(nr, addr)		\
 	__set_bit((nr), (unsigned long *)(addr))
 #define pitix_test_and_clear_bit(nr, addr) \
@@ -28,11 +29,15 @@
 
 static DEFINE_SPINLOCK(bitmap_lock);
 
+/*
+ * Returns a free inode number for a new inode
+ */
 int pitix_alloc_inode(struct super_block *sb)
 {
+	int j = 0;
+
 	struct pitix_super_block *psb = pitix_sb(sb);
 	int max_inodes = get_inodes(sb);
-	int j;
 
 	spin_lock(&bitmap_lock);
 	j = pitix_find_first_zero_bit(psb->imap, max_inodes);
@@ -42,15 +47,19 @@ int pitix_alloc_inode(struct super_block *sb)
 		psb->ffree--;
 		spin_unlock(&bitmap_lock);
 		mark_buffer_dirty(psb->imap_bh);
-		return j;
+		goto out_alloc_inode;
 	}
 
 	spin_unlock(&bitmap_lock);
 	printk(LOG_LEVEL "no more free inodes\n");
 
-	return 0;
+out_alloc_inode:
+	return j;
 }
 
+/*
+ * Mark inode number as unused
+ */
 void pitix_free_inode(struct super_block *sb, int ino)
 {
 	struct pitix_super_block *psb = pitix_sb(sb);
@@ -68,11 +77,15 @@ void pitix_free_inode(struct super_block *sb, int ino)
 	mark_buffer_dirty(psb->imap_bh);
 }
 
+/*
+ * Returns a free block number for a new block
+ */
 int pitix_alloc_block(struct super_block *sb)
 {
+	int j = 0;
+
 	struct pitix_super_block *psb = pitix_sb(sb);
 	int max_blocks = get_blocks(sb);
-	int j;
 
 	spin_lock(&bitmap_lock);
 	j = pitix_find_first_zero_bit(psb->dmap, max_blocks);
@@ -81,18 +94,22 @@ int pitix_alloc_block(struct super_block *sb)
 		psb->bfree--;
 		spin_unlock(&bitmap_lock);
 		mark_buffer_dirty(psb->dmap_bh);
-		return j;
+		goto out_alloc_block;
 	}
 
 	spin_unlock(&bitmap_lock);
 	printk(LOG_LEVEL "no more free blocks\n");
-	return 0;
+
+out_alloc_block:
+	return j;
 }
 
+/*
+ * Mark block number as unused
+ */
 void pitix_free_block(struct super_block *sb, int block)
 {
 	struct pitix_super_block *psb = pitix_sb(sb);
-	unsigned long bit, zone;
 
 	if (block <= 0 || (block > get_blocks(sb))) {
 		printk(LOG_LEVEL "Trying to free block not in datazone\n");
@@ -111,6 +128,10 @@ void pitix_free_block(struct super_block *sb, int block)
 	mark_buffer_dirty(psb->dmap_bh);
 }
 
+/*
+ * Count number of blocks used by an inode.
+ * Used for stat
+ */
 int count_blocks(struct inode *inode)
 {
 	struct pitix_inode_info *pii = pitix_i(inode);
@@ -124,13 +145,12 @@ int count_blocks(struct inode *inode)
 		ret++;
 
 	if (pii->indirect_db) {
-
 		bh = sb_bread(sb, psb->dzone_block + pii->indirect_db);
-
 		if (!bh) {
 			printk(LOG_LEVEL "Unable to read block\n");
-			return ret;
+			goto out_count;
 		}
+
 		for (i = 0; i < sb->s_blocksize/2; ++i) {
 			b = (__u16 *)bh->b_data + i;
 			if (!*b)
@@ -142,5 +162,6 @@ int count_blocks(struct inode *inode)
 		ret++;
 	}
 
+out_count:
 	return ret;
 }

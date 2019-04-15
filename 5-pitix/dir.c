@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- *  dir.c
+ *  dir.c - pitix directory handling functions
  *
- *  pitix directory handling functions
  *  INSPIRED FROM linux/fs/minix/dir.c
  *
  */
@@ -32,31 +31,38 @@ static struct page *dir_get_page(struct inode *dir)
 
 	if (!IS_ERR(page))
 		kmap(page);
+
 	return page;
 }
 
-static inline void *pitix_next_entry(void *de)
+/*
+ * Reads directory entries starting with ctx->pos
+ * Stops after the first read. Called multiple times for a ls
+ * Returns 0 even if directory is empty
+ */
+static int pitix_readdir(struct file *file, struct dir_context *ctx)
 {
-	return (void *)((char *)de + dir_entry_size());
-}
+	char *kaddr = NULL;
+	struct pitix_dir_entry *de = NULL;
+	int over = 0;
+	int err = 0;
 
-int pitix_readdir(struct file *file, struct dir_context *ctx)
-{
 	struct inode *inode = file_inode(file);
 	struct super_block *sb = inode->i_sb;
 	struct pitix_super_block *psb = pitix_sb(sb);
+	struct page *page = dir_get_page(inode);
 	unsigned int chunk_size = dir_entry_size();
 	unsigned long pos = ctx->pos;
-	char *kaddr;
-	struct page *page = dir_get_page(inode);
-	struct pitix_dir_entry *de;
-	int over;
 
-	if (pos >= inode->i_size)
-		return 0;
+	if (pos >= inode->i_size) {
+		err = 0;
+		goto out_readdir;
+	}
 
-	if (IS_ERR(page))
-		return -EINVAL;
+	if (IS_ERR(page)) {
+		err = -EINVAL;
+		goto out_readdir;
+	}
 
 	kaddr = (char *)page_address(page);
 	for (; ctx->pos < dir_entries_per_block(sb); ctx->pos++) {
@@ -72,21 +78,25 @@ int pitix_readdir(struct file *file, struct dir_context *ctx)
 	}
 
 	dir_put_page(page);
-	return 0;
+
+out_readdir:
+	return err;
 }
 
+/*
+ * Compare 2 strings with checks for lenths
+ */
 static inline int namecompare(int len, int maxlen,
 	const char *name, const char *buffer)
 {
 	if (len < maxlen && buffer[len])
 		return 0;
+
 	return !memcmp(name, buffer, len);
 }
 
 /*
- *	pitix_find_entry()
- *
- * finds an entry in the specified directory with the wanted name. It
+ * Finds an entry in the specified directory with the wanted name. It
  * returns the cache buffer in which the entry was found, and the entry
  * itself (as a parameter - res_dir). It does NOT read the inode of the
  * entry - you'll have to do that yourself if you want to.
@@ -94,20 +104,21 @@ static inline int namecompare(int len, int maxlen,
 struct pitix_dir_entry *pitix_find_entry(struct dentry *dentry,
 		struct page **res_page)
 {
+	struct pitix_dir_entry *de = NULL;
+	struct page *page = NULL;
+	char *kaddr = NULL;
+	int p = 0;
+
 	const char *name = dentry->d_name.name;
 	int namelen = dentry->d_name.len;
 	struct inode *dir = d_inode(dentry->d_parent);
 	struct super_block *sb = dir->i_sb;
-	struct page *page = NULL;
-	char *kaddr;
-	int p;
-	struct pitix_dir_entry *de;
 
 	*res_page = NULL;
 
 	page = dir_get_page(dir);
 	if (IS_ERR(page))
-		return NULL;
+		goto out_find_entry;
 
 	kaddr = (char *)page_address(page);
 	for (p = 0; p < dir_entries_per_block(sb); p++) {
@@ -120,34 +131,36 @@ struct pitix_dir_entry *pitix_find_entry(struct dentry *dentry,
 	}
 	dir_put_page(page);
 
+out_find_entry:
 	return NULL;
-
 found:
 	*res_page = page;
 	return de;
 }
 
+/* Return inode of dentry */
 ino_t pitix_inode_by_name(struct dentry *dentry, int delete)
 {
-	struct page *page;
-	struct pitix_dir_entry *de = pitix_find_entry(dentry, &page);
+	struct page *page = NULL;
 	ino_t res = 0;
 
-	if (de) {
-		struct address_space *mapping = page->mapping;
-		struct inode *inode = mapping->host;
+	struct pitix_dir_entry *de = pitix_find_entry(dentry, &page);
 
+	if (de) {
 		res = de->ino;
 		dir_put_page(page);
 	}
+
 	return res;
 }
 
+/* Rrepare len bytes to write in page*/
 static int pitix_prepare_chunk(struct page *page, loff_t pos, unsigned int len)
 {
 	return __block_write_begin(page, pos, len, pitix_get_block);
 }
 
+/* Write len bytes in page */
 static int dir_commit_chunk(struct page *page, loff_t pos, unsigned int len)
 {
 	struct address_space *mapping = page->mapping;
@@ -156,10 +169,11 @@ static int dir_commit_chunk(struct page *page, loff_t pos, unsigned int len)
 
 	block_write_end(NULL, mapping, pos, len, len, page, NULL);
 
-	if (pos+len > dir->i_size) {
+	if (pos + len > dir->i_size) {
 		i_size_write(dir, pos+len);
 		mark_inode_dirty(dir);
 	}
+
 	if (IS_DIRSYNC(dir))
 		err = write_one_page(page);
 	else
@@ -168,18 +182,21 @@ static int dir_commit_chunk(struct page *page, loff_t pos, unsigned int len)
 	return err;
 }
 
+/* Save entry in directory */
 int pitix_add_link(struct dentry *dentry, struct inode *inode)
 {
+	struct pitix_dir_entry *de = NULL;
+	struct page *page = NULL;
+	char *kaddr = NULL;
+	char *namx = NULL;
+	int p = 0;
+	int err = 0;
+	__u16 inumber = 0;
+
 	struct inode *dir = d_inode(dentry->d_parent);
 	const char *name = dentry->d_name.name;
 	int namelen = dentry->d_name.len;
 	struct super_block *sb = dir->i_sb;
-	struct pitix_dir_entry *de;
-	struct page *page = NULL;
-	char *kaddr;
-	int p, err;
-	char *namx = NULL;
-	__u16 inumber;
 
 	page = dir_get_page(dir);
 	err = PTR_ERR(page);
@@ -188,7 +205,6 @@ int pitix_add_link(struct dentry *dentry, struct inode *inode)
 
 	lock_page(page);
 	kaddr = (char *)page_address(page);
-
 	for (p = 0; p < dir_entries_per_block(sb); p++) {
 		de = (struct pitix_dir_entry *)kaddr + p;
 		namx = de->name;
@@ -224,21 +240,25 @@ out_unlock:
 	goto out_put;
 }
 
+/* Remove dentry from directory */
 int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page)
 {
+	int err = 0;
+
 	struct inode *inode = page->mapping->host;
 	char *kaddr = page_address(page);
 	loff_t pos = (char *)de - kaddr;
 	unsigned int len = dir_entry_size();
-	int err;
 
 	lock_page(page);
 	err = pitix_prepare_chunk(page, pos, len);
 	if (err == 0) {
 		de->ino = 0;
 		err = dir_commit_chunk(page, pos, len);
-	} else
+	} else {
 		unlock_page(page);
+	}
+
 	dir_put_page(page);
 	inode->i_ctime = inode->i_mtime = current_time(inode);
 	mark_inode_dirty(inode);
@@ -246,16 +266,21 @@ int pitix_delete_entry(struct pitix_dir_entry *de, struct page *page)
 	return err;
 }
 
+/* Map space for new directory */
 int pitix_make_empty(struct inode *inode, struct inode *dir)
 {
-	struct page *page = grab_cache_page(inode->i_mapping, 0);
-	char *kaddr;
+	struct pitix_dir_entry *de = NULL;
+	char *kaddr = NULL;
 	int err = 0;
-	struct pitix_dir_entry *de;
+
+	struct page *page = grab_cache_page(inode->i_mapping, 0);
 	struct super_block *sb = dir->i_sb;
 
-	if (!page)
-		return -ENOMEM;
+	if (!page) {
+		err = -ENOMEM;
+		goto out_make_empty;
+	}
+
 	err = pitix_prepare_chunk(page, 0, sb->s_blocksize);
 	if (err) {
 		unlock_page(page);
@@ -269,40 +294,47 @@ int pitix_make_empty(struct inode *inode, struct inode *dir)
 	err = dir_commit_chunk(page, 0, sb->s_blocksize);
 fail:
 	put_page(page);
+out_make_empty:
 	return err;
 }
 
 /*
- * routine to check that the specified directory is empty (for rmdir)
+ * Routine to check that the specified directory is empty (for rmdir)
+ * Return 0 if true
  */
 int pitix_empty_dir(struct inode *inode)
 {
+	struct pitix_dir_entry *de = NULL;
 	struct page *page = NULL;
+	char *kaddr = NULL;
+	int p = 0;
+	int err = 1;
+
 	unsigned long i, npages = dir_pages(inode);
 	struct super_block *sb = inode->i_sb;
-	char *p, *kaddr, *limit;
 
 	page = dir_get_page(inode);
-	if (IS_ERR(page))
-		BUG();
+	if (IS_ERR(page)) {
+		err = 1;
+		goto out_dir;
+	}
 
 	kaddr = (char *)page_address(page);
-	limit = kaddr + sb->s_blocksize - dir_entry_size();
-	for (p = kaddr; p <= limit; p = pitix_next_entry(p)) {
-		struct pitix_dir_entry *de = (struct pitix_dir_entry *)p;
-
-		if (de->ino != 0)
-			goto not_empty;
+	for (p = 0; p < dir_entries_per_block(sb); p++) {
+		de = (struct pitix_dir_entry *)kaddr + p;
+		if (de->ino != 0) {
+			err = 0;
+			break;
+		}
 	}
 
 	dir_put_page(page);
-	return 1;
 
-not_empty:
-	dir_put_page(page);
-	return 0;
+out_dir:
+	return err;
 }
 
+/* Dir operations */
 const struct file_operations pitix_dir_operations = {
 	.llseek		= generic_file_llseek,
 	.read		= generic_read_dir,
